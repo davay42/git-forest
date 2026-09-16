@@ -1,0 +1,4 @@
+# Local state and secrets
+.env
+*.sqlite
+node_modules/
