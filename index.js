@@ -22,15 +22,24 @@ function timingSafeEqualStr(a, b) {
 }
 
 const authBuckets = new Map();
+
+// FIX: Only check if the IP has too many *failed* attempts
 function isRateLimited(ip) {
   const now = Date.now();
   const entry = authBuckets.get(ip);
+  if (!entry || now > entry.resetAt) return false;
+  return entry.count >= 5; // Block after 5 FAILURES in 1 minute
+}
+
+// FIX: Only increment the counter when a password is explicitly wrong
+function recordFailedAuth(ip) {
+  const now = Date.now();
+  const entry = authBuckets.get(ip);
   if (!entry || now > entry.resetAt) {
-    authBuckets.set(ip, { count: 1, resetAt: now + 60000 });
-    return false;
+    authBuckets.set(ip, { count: 1, resetAt: now + 60000 }); // 1 min window
+  } else {
+    entry.count++;
   }
-  entry.count++;
-  return entry.count > 5;
 }
 
 setInterval(() => {
@@ -159,6 +168,7 @@ function checkGitAuth(req, res, ip) {
 
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Basic ")) {
+    recordFailedAuth(ip); // <--- Record the failure
     res.writeHead(401, { "WWW-Authenticate": "Basic realm=\"git-forest\"" });
     res.end("Unauthorized");
     return null;
@@ -168,6 +178,7 @@ function checkGitAuth(req, res, ip) {
   const [user, password] = credentials.split(":");
 
   if (!password || !timingSafeEqualStr(password, GIT_SECRET)) {
+    recordFailedAuth(ip); // <--- Record the failure
     res.writeHead(403, { "Content-Type": "text/plain" });
     res.end("Forbidden");
     return null;
