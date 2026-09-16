@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌲 git-forest</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0fdf4;
+            color: #1e293b;
+            line-height: 1.6;
+            padding: 2rem;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 720px;
+            width: 100%;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 2rem 0;
+            border-bottom: 2px solid #bbf7d0;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            color: #14532d;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.02em;
+        }
+
+        .tagline {
+            font-size: 1.25rem;
+            color: #166534;
+            font-weight: 500;
+        }
+
+        .badges {
+            margin-top: 1rem;
+            display: flex;
+            gap: 0.5rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            background: #dcfce7;
+            color: #166534;
+            padding: 0.25rem 0.75rem;
+            border-radius: 99px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            border: 1px solid #bbf7d0;
+        }
+
+        section {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            color: #0f172a;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: #475569;
+        }
+
+        ul {
+            padding-left: 1.5rem;
+            margin-bottom: 1rem;
+            color: #475569;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        code {
+            background: #f1f5f9;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.9em;
+            color: #be123c;
+        }
+
+        pre {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .card {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 1.5rem;
+            text-decoration: none;
+            color: inherit;
+            transition: all 0.2s;
+        }
+
+        .card:hover {
+            border-color: #22c55e;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgb(0 0 0 / 0.05);
+        }
+
+        .card h3 {
+            color: #166534;
+            margin-bottom: 0.5rem;
+        }
+
+        footer {
+            text-align: center;
+            color: #94a3b8;
+            font-size: 0.875rem;
+            margin-top: 2rem;
+        }
+
+        a {
+            color: #16a34a;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>🌲 git-forest</h1>
+            <p class="tagline">The Sovereign Micro-PaaS</p>
+            <div class="badges">
+                <span class="badge">Zero Dependencies</span>
+                <span class="badge">Git-Native</span>
+                <span class="badge">Filesystem Routing</span>
+            </div>
+        </header>
+
+        <section>
+            <h2>🚀 How it Works</h2>
+            <p>Welcome to your <code>git-forest</code> instance. This server is its own Git remote. The filesystem is
+                the router, directories are isolated components, and <code>git push</code> is the deployment mechanism.
+            </p>
+            <ul>
+                <li><strong>Folders are Routes:</strong> Create a directory with an <code>index.js</code> to spawn a new
+                    isolated worker.</li>
+                <li><strong>Files are State:</strong> Store data in Markdown, JSON, or SQLite right next to your code.
+                </li>
+                <li><strong>Git is the Pipeline:</strong> Push to this server to instantly deploy code and data with
+                    zero-downtime hot-reloading.</li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>🔌 Connect & Deploy</h2>
+            <p>To start building, clone this live server to your local machine. Use the <code>GIT_SECRET</code> you
+                configured in your deployment environment as the password.</p>
+            <pre><code>git clone https://forest:&lt;your-secret-token&gt;@&lt;your-domain.com&gt;/git my-forest
+cd my-forest</code></pre>
+            <p>Create a new folder, add an <code>index.js</code>, commit, and push. Your component will be live
+                instantly.</p>
+        </section>
+
+        <section>
+            <h2>📦 Active Examples</h2>
+            <p>Explore the example components currently running in this forest:</p>
+            <div class="grid">
+                <a href="/hello/" class="card">
+                    <h3>/hello</h3>
+                    <p>A minimal "Hello World" worker demonstrating basic HTTP routing and graceful shutdowns.</p>
+                </a>
+                <a href="/poll/" class="card">
+                    <h3>/poll</h3>
+                    <p>A live voting application using line-by-line Markdown for state and auto-committing data to Git.
+                    </p>
+                </a>
+            </div>
+        </section>
+
+        <footer>
+            <p>Powered by <strong>git-forest</strong> · The boundary between code, data, and infrastructure dissolves.
+            </p>
+        </footer>
+    </div>
+</body>
+
+</html>

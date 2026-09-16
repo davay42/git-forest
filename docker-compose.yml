@@ -7,8 +7,6 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-      # Uses the env var from Coolify, falls back to a default for local testing
-      - GIT_SECRET=${GIT_SECRET:-change_this_secret_in_production}
     volumes:
       - forest-data:/app
 
