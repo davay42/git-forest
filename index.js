@@ -1,18 +1,61 @@
 import { createServer, request, Agent } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { readdir, readFile, unlink, access } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { existsSync } from "node:fs";
+import { promisify } from "node:util";
 import crypto from "node:crypto";
+
+const execFileAsync = promisify(execFile);
 
 const PORT = process.env.PORT || 3000;
 const ROOT = process.cwd();
 const GIT_SECRET = process.env.GIT_SECRET;
+// FIX 3: Only trust X-Forwarded-For if explicitly configured (e.g. behind Traefik/Caddy)
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+
 const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript", ".json": "application/json", ".md": "text/markdown", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg" };
 
 const proxyAgent = new Agent({ keepAlive: true, maxSockets: 128 });
 const tissues = new Map();
+const tissueTokens = new Map(); // Maps secure token -> tissueName
 let isReloading = false;
+
+// ─── CENTRALIZED GIT QUEUE (MUTEX) ─────────────────────────────────────
+let gitQueue = Promise.resolve();
+
+async function queueGitCommit(files, message) {
+  const currentQueue = gitQueue;
+  let resolveTask;
+  const taskPromise = new Promise(r => resolveTask = r);
+  gitQueue = taskPromise;
+
+  try {
+    await currentQueue.catch(() => { });
+
+    const fileList = Array.isArray(files) ? files : [files];
+    const addArgs = fileList.length > 0 ? ['add', ...fileList] : ['add', '.'];
+
+    await execFileAsync('git', addArgs, { cwd: ROOT });
+
+    const { stdout } = await execFileAsync('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
+    if (!stdout.trim()) {
+      const result = { status: 'ok', message: 'No changes to commit' };
+      resolveTask(result);
+      return result;
+    }
+
+    await execFileAsync('git', ['commit', '-m', message || 'chore: auto-commit'], { cwd: ROOT });
+    const result = { status: 'ok', message: 'Committed successfully' };
+    resolveTask(result);
+    return result;
+  } catch (err) {
+    console.error('[git-queue] Error:', err.message);
+    const result = { status: 'error', message: err.message };
+    resolveTask(result);
+    return result;
+  }
+}
 
 // ─── SECURITY UTILITIES ────────────────────────────────────────────────
 function timingSafeEqualStr(a, b) {
@@ -22,21 +65,18 @@ function timingSafeEqualStr(a, b) {
 }
 
 const authBuckets = new Map();
-
-// FIX: Only check if the IP has too many *failed* attempts
 function isRateLimited(ip) {
   const now = Date.now();
   const entry = authBuckets.get(ip);
   if (!entry || now > entry.resetAt) return false;
-  return entry.count >= 5; // Block after 5 FAILURES in 1 minute
+  return entry.count >= 5;
 }
 
-// FIX: Only increment the counter when a password is explicitly wrong
 function recordFailedAuth(ip) {
   const now = Date.now();
   const entry = authBuckets.get(ip);
   if (!entry || now > entry.resetAt) {
-    authBuckets.set(ip, { count: 1, resetAt: now + 60000 }); // 1 min window
+    authBuckets.set(ip, { count: 1, resetAt: now + 60000 });
   } else {
     entry.count++;
   }
@@ -48,8 +88,10 @@ setInterval(() => {
 }, 60000).unref();
 
 function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded) return forwarded.split(',')[0].trim();
+  if (TRUST_PROXY) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) return forwarded.split(',')[0].trim();
+  }
   return req.socket.remoteAddress;
 }
 
@@ -59,7 +101,7 @@ function addSecurityHeaders(res) {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 }
 
-// ─── ZERO-DOWNTIME SWAP LOGIC ──────────────────────────────────────────
+// ─── ZERO-DOWNTIME SWAP LOGIC (HARDENED) ───────────────────────────────
 async function swapTissue(name) {
   const oldTissue = tissues.get(name);
   const newSocketPath = `/tmp/forest-${name}-${Date.now()}.sock`;
@@ -67,31 +109,56 @@ async function swapTissue(name) {
   await unlink(newSocketPath).catch(() => { });
   console.log(`[sync] 🌱 Starting new /${name}...`);
 
+  // FIX 2: Per-tissue token for strict commit isolation
+  const tissueToken = crypto.randomBytes(16).toString('hex');
+
   const newProc = spawn("node", [scriptPath], {
-    env: { ...process.env, SOCKET_PATH: newSocketPath, TISSUE_NAME: name, TISSUE_DIR: join(ROOT, name) },
+    env: {
+      ...process.env,
+      SOCKET_PATH: newSocketPath,
+      TISSUE_NAME: name,
+      TISSUE_DIR: join(ROOT, name),
+      FOREST_TISSUE_TOKEN: tissueToken,
+      FOREST_CORE_PORT: PORT
+    },
     stdio: ['inherit', 'inherit', 'inherit', 'ipc']
   });
 
-  // FIX 4: Stop waiting immediately if the process crashes before sending 'ready'
+  tissueTokens.set(tissueToken, name);
+
+  // FIX 1: Readiness is an actual signal, not a race
+  let ready = false;
+  let exitedEarly = false;
+
   await new Promise((resolve) => {
-    let resolved = false;
-    const done = () => { if (!resolved) { resolved = true; resolve(); } };
-    newProc.once('message', (msg) => { if (msg === 'ready') done(); });
-    newProc.once('exit', done);
-    setTimeout(done, 2000);
+    const done = () => resolve();
+    newProc.once('message', (msg) => { if (msg === 'ready') { ready = true; done(); } });
+    newProc.once('exit', (code) => { exitedEarly = true; done(); });
+    setTimeout(done, 2000); // 2s timeout for boot
   });
 
-  tissues.set(name, { socketPath: newSocketPath, proc: newProc });
+  if (!ready) {
+    console.log(`[sync] ❌ /${name} failed to start (ready=${ready}, exited=${exitedEarly}) — keeping previous version live`);
+    if (!exitedEarly) newProc.kill("SIGKILL"); // Ensure it's dead if it just timed out
+    tissueTokens.delete(tissueToken);
+    return; // Abort swap, old tissue remains untouched
+  }
+
+  // Process is ready and alive. Perform the atomic swap.
+  tissues.set(name, { socketPath: newSocketPath, proc: newProc, token: tissueToken });
   console.log(`[sync] 🔄 Swapped router for /${name}`);
 
   if (oldTissue) {
+    tissueTokens.delete(oldTissue.token);
     oldTissue.proc.kill("SIGTERM");
     setTimeout(() => unlink(oldTissue.socketPath).catch(() => { }), 5000);
   }
 
+  // Attach the crash-retry listener ONLY to a process we know is alive and ready
   newProc.on("exit", (code) => {
     if (code !== 0 && code !== null && tissues.get(name)?.proc === newProc) {
       console.log(`[error] /${name} crashed with code ${code}. Restarting in 3s...`);
+      tissueTokens.delete(tissueToken);
       tissues.delete(name);
       setTimeout(() => swapTissue(name), 3000);
     }
@@ -101,6 +168,7 @@ async function swapTissue(name) {
 function killTissue(name) {
   const tissue = tissues.get(name);
   if (tissue) {
+    tissueTokens.delete(tissue.token);
     tissue.proc.kill("SIGTERM");
     setTimeout(() => unlink(tissue.socketPath).catch(() => { }), 5000);
   }
@@ -140,7 +208,6 @@ async function serveStatic(req, res) {
 
   if (!filePath.startsWith(ROOT)) { res.writeHead(403); return res.end("Forbidden"); }
 
-  // FIX 1: Deep Blocklist - Protect sensitive files at ANY depth in the tree
   const relPath = filePath.slice(ROOT.length);
   const blockedNames = ['.git', '.env', '.env.local', '.env.production', 'docker-compose.yml', 'Dockerfile', 'package-lock.json'];
   const parts = relPath.split('/');
@@ -168,7 +235,7 @@ function checkGitAuth(req, res, ip) {
 
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Basic ")) {
-    recordFailedAuth(ip); // <--- Record the failure
+    recordFailedAuth(ip);
     res.writeHead(401, { "WWW-Authenticate": "Basic realm=\"git-forest\"" });
     res.end("Unauthorized");
     return null;
@@ -178,7 +245,7 @@ function checkGitAuth(req, res, ip) {
   const [user, password] = credentials.split(":");
 
   if (!password || !timingSafeEqualStr(password, GIT_SECRET)) {
-    recordFailedAuth(ip); // <--- Record the failure
+    recordFailedAuth(ip);
     res.writeHead(403, { "Content-Type": "text/plain" });
     res.end("Forbidden");
     return null;
@@ -229,7 +296,6 @@ function handleGit(req, res, ip) {
   git.on("close", (code) => { res.end(); });
 }
 
-// FIX 3: Raw URL Proxying to preserve encoding (e.g. %20) and query strings
 function proxyToTissue(req, res, segment) {
   const tissue = tissues.get(segment);
   if (!tissue) { res.writeHead(502); return res.end("Component unavailable"); }
@@ -253,6 +319,50 @@ const server = createServer(async (req, res) => {
     let path = url.pathname;
     const ip = getClientIp(req);
 
+    // 1. Internal Git Commit API (Protected by Per-Tissue Token)
+    if (path === "/_forest/commit" && req.method === "POST") {
+      const token = req.headers['x-forest-token'];
+      const tissueName = tissueTokens.get(token);
+
+      if (!tissueName) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        return res.end("Forbidden: Invalid tissue token");
+      }
+
+      let body = "";
+      req.on("data", chunk => {
+        body += chunk;
+        if (body.length > 1e6) req.destroy(); // 1MB safety limit
+      });
+      req.on("end", async () => {
+        try {
+          const payload = JSON.parse(body);
+          let files = payload.files || [];
+          if (!Array.isArray(files)) files = [files];
+
+          // FIX 2: Validate that all files are strictly within the calling tissue's directory
+          const tissuePrefix = `${tissueName}/`;
+          const isSafe = files.every(f => typeof f === 'string' && (f.startsWith(tissuePrefix) || f === tissueName));
+
+          if (!isSafe) {
+            console.warn(`[security] Tissue ${tissueName} attempted to commit files outside its scope:`, files);
+            res.writeHead(403, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify({ status: "error", message: "Forbidden: Cannot commit files outside tissue scope" }));
+          }
+
+          if (files.length === 0) files = [tissueName];
+
+          const result = await queueGitCommit(files, payload.message);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "error", message: "Invalid JSON" }));
+        }
+      });
+      return;
+    }
+
     if (path.startsWith("/git")) return handleGit(req, res, ip);
 
     if (path === "/" || path === "") {
@@ -263,7 +373,6 @@ const server = createServer(async (req, res) => {
     const segment = path.split("/")[1];
     if (segment && tissues.has(segment)) {
       if (path === `/${segment}`) {
-        // FIX 2: Preserve query string on trailing slash redirect
         res.writeHead(301, { "Location": `/${segment}/${url.search}` });
         return res.end();
       }
@@ -285,6 +394,12 @@ process.on('SIGTERM', () => {
 });
 
 async function boot() {
+  // Self-healing: Clean up stale git locks from previous container crashes
+  const lockFiles = ['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'];
+  for (const lock of lockFiles) {
+    await unlink(join(ROOT, lock)).catch(() => { });
+  }
+
   const entries = await readdir(ROOT, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
@@ -293,7 +408,28 @@ async function boot() {
   }
   server.listen(PORT, () => {
     console.log(`[ready] http://localhost:${PORT} | components: ${[...tissues.keys()].join(", ") || "none"}`);
-    console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'}`);
+    console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
   });
 }
 boot();
+
+
+
+/*
+// Inside your tissue (e.g., poll/index.js)
+async function commitToForest(files, message) {
+  try {
+    const res = await fetch(`http://localhost:${process.env.FOREST_CORE_PORT}/_forest/commit`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-forest-token': process.env.FOREST_TISSUE_TOKEN // Updated env var
+      },
+      body: JSON.stringify({ files, message })
+    });
+    return res.json();
+  } catch (err) {
+    console.error('[tissue] Failed to request commit:', err);
+  }
+}
+*/
