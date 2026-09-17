@@ -13,6 +13,7 @@ const ROOT = process.cwd();
 const PUBLIC_DIR = join(ROOT, 'public'); // 🚀 NEW: Strict static boundary
 const GIT_SECRET = process.env.GIT_SECRET;
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+const GITHUB_BACKUP_URL = process.env.GITHUB_BACKUP_URL;
 
 // ─── GIT HTTP BACKEND DISCOVERY ───────────────────────────────────────────
 function discoverGitHttpBackend() {
@@ -341,6 +342,19 @@ function proxyToComponent(req, res, segment) {
   req.pipe(proxyReq);
 }
 
+// ─── BACKGROUND BACKUP SYNC ────────────────────────────────────────────
+async function syncToBackup() {
+  if (!GITHUB_BACKUP_URL) return;
+  try {
+    // Push the local 'main' branch directly to the backup URL
+    await execFileAsync('git', ['push', GITHUB_BACKUP_URL, 'main'], { cwd: ROOT });
+    // console.log('[backup] ✅ Synced to GitHub'); // Uncomment for verbose logging
+  } catch (err) {
+    // Git push exits 0 if up-to-date, so errors here are actual failures
+    console.error('[backup] ⚠️ Sync failed:', err.stderr || err.message);
+  }
+}
+
 // ─── THE GATEWAY ───────────────────────────────────────────────────────
 const server = createServer(async (req, res) => {
   try {
@@ -474,6 +488,13 @@ async function boot() {
       if (existsSync(join(ROOT, entry.name, "index.js"))) await swapComponent(entry.name);
     }
   }
+
+  if (GITHUB_BACKUP_URL) {
+    console.log(`[backup] 🔄 GitHub backup enabled. Syncing every 5 minutes.`);
+    setTimeout(syncToBackup, 10000); // Initial sync 10s after boot
+    setInterval(syncToBackup, 5 * 60 * 1000); // Every 5 mins
+  }
+
   server.listen(PORT, () => {
     console.log(`[ready] http://localhost:${PORT} | components: ${[...components.keys()].join(", ") || "none"}`);
     console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
