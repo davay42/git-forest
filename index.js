@@ -1,6 +1,6 @@
 import { createServer, request, Agent } from "node:http";
 import { spawn, execFile } from "node:child_process";
-import { readdir, readFile, unlink, access } from "node:fs/promises";
+import { readdir, readFile, unlink, stat } from "node:fs/promises"; // Added stat, removed access
 import { join, extname } from "node:path";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
@@ -10,43 +10,33 @@ const execFileAsync = promisify(execFile);
 
 const PORT = process.env.PORT || 3000;
 const ROOT = process.cwd();
+const PUBLIC_DIR = join(ROOT, 'public'); // 🚀 NEW: Strict static boundary
 const GIT_SECRET = process.env.GIT_SECRET;
-// FIX 3: Only trust X-Forwarded-For if explicitly configured (e.g. behind Traefik/Caddy)
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 
 // ─── GIT HTTP BACKEND DISCOVERY ───────────────────────────────────────────
 function discoverGitHttpBackend() {
-  // If explicitly set via environment variable, use that
-  if (process.env.GIT_HTTP_BACKEND) {
-    return process.env.GIT_HTTP_BACKEND;
-  }
-
-  // Common locations by platform
+  if (process.env.GIT_HTTP_BACKEND) return process.env.GIT_HTTP_BACKEND;
   const commonPaths = [
-    '/usr/libexec/git-core/git-http-backend',           // Linux/Alpine
-    '/usr/local/libexec/git-core/git-http-backend',      // macOS Homebrew (Intel)
-    '/opt/homebrew/libexec/git-core/git-http-backend',   // macOS Homebrew (Apple Silicon)
-    '/Library/Developer/CommandLineTools/usr/libexec/git-core/git-http-backend', // macOS Xcode CLT
-    '/usr/lib/git-core/git-http-backend',               // Some Linux distros
+    '/usr/libexec/git-core/git-http-backend',
+    '/usr/local/libexec/git-core/git-http-backend',
+    '/opt/homebrew/libexec/git-core/git-http-backend',
+    '/Library/Developer/CommandLineTools/usr/libexec/git-core/git-http-backend',
+    '/usr/lib/git-core/git-http-backend',
   ];
-
   for (const path of commonPaths) {
-    if (existsSync(path)) {
-      return path;
-    }
+    if (existsSync(path)) return path;
   }
-
-  // Fallback to standard location (will fail if not found, but maintains backward compatibility)
   return '/usr/libexec/git-core/git-http-backend';
 }
 
 const GIT_HTTP_BACKEND = discoverGitHttpBackend();
 
-const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript", ".json": "application/json", ".md": "text/markdown", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg" };
+const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript", ".json": "application/json", ".md": "text/markdown", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon" };
 
 const proxyAgent = new Agent({ keepAlive: true, maxSockets: 128 });
 const components = new Map();
-const componentTokens = new Map(); // Maps secure token -> componentName
+const componentTokens = new Map();
 let isReloading = false;
 const startTime = Date.now();
 
@@ -61,10 +51,8 @@ async function queueGitCommit(files, message) {
 
   try {
     await currentQueue.catch(() => { });
-
     const fileList = Array.isArray(files) ? files : [files];
     const addArgs = fileList.length > 0 ? ['add', ...fileList] : ['add', '.'];
-
     await execFileAsync('git', addArgs, { cwd: ROOT });
 
     const { stdout } = await execFileAsync('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
@@ -138,7 +126,6 @@ async function swapComponent(name) {
   await unlink(newSocketPath).catch(() => { });
   console.log(`[sync] 🌱 Starting new /${name}...`);
 
-  // FIX 2: Per-component token for strict commit isolation
   const componentToken = crypto.randomBytes(16).toString('hex');
 
   const newProc = spawn("node", [scriptPath], {
@@ -155,7 +142,6 @@ async function swapComponent(name) {
 
   componentTokens.set(componentToken, name);
 
-  // FIX 1: Readiness is an actual signal, not a race
   let ready = false;
   let exitedEarly = false;
 
@@ -163,17 +149,16 @@ async function swapComponent(name) {
     const done = () => resolve();
     newProc.once('message', (msg) => { if (msg === 'ready') { ready = true; done(); } });
     newProc.once('exit', (code) => { exitedEarly = true; done(); });
-    setTimeout(done, 2000); // 2s timeout for boot
+    setTimeout(done, 2000);
   });
 
   if (!ready) {
     console.log(`[sync] ❌ /${name} failed to start (ready=${ready}, exited=${exitedEarly}) — keeping previous version live`);
-    if (!exitedEarly) newProc.kill("SIGKILL"); // Ensure it's dead if it just timed out
+    if (!exitedEarly) newProc.kill("SIGKILL");
     componentTokens.delete(componentToken);
-    return; // Abort swap, old component remains untouched
+    return;
   }
 
-  // Process is ready and alive. Perform the atomic swap.
   components.set(name, { socketPath: newSocketPath, proc: newProc, token: componentToken, startTime: Date.now() });
   console.log(`[sync] 🔄 Swapped router for /${name}`);
 
@@ -183,7 +168,6 @@ async function swapComponent(name) {
     setTimeout(() => unlink(oldComponent.socketPath).catch(() => { }), 5000);
   }
 
-  // Attach the crash-retry listener ONLY to a process we know is alive and ready
   newProc.on("exit", (code) => {
     if (code !== 0 && code !== null && components.get(name)?.proc === newProc) {
       console.log(`[error] /${name} crashed with code ${code}. Restarting in 3s...`);
@@ -211,7 +195,7 @@ process.on("SIGHUP", async () => {
     const entries = await readdir(ROOT, { withFileTypes: true });
     const newFolders = new Set();
     for (const entry of entries) {
-      if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
+      if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
         if (existsSync(join(ROOT, entry.name, "index.js"))) {
           newFolders.add(entry.name);
           await swapComponent(entry.name);
@@ -233,24 +217,41 @@ process.on("SIGHUP", async () => {
 // ─── HTTP HANDLING ─────────────────────────────────────────────────────
 async function serveStatic(req, res) {
   const url = new URL(req.url, "http://localhost");
-  const filePath = join(ROOT, decodeURIComponent(url.pathname));
+  // Strip leading slashes to prevent path traversal via //../
+  const safePath = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+  const filePath = join(PUBLIC_DIR, safePath);
 
-  if (!filePath.startsWith(ROOT)) { res.writeHead(403); return res.end("Forbidden"); }
+  // Strict boundary check: MUST be inside PUBLIC_DIR
+  if (!filePath.startsWith(PUBLIC_DIR)) {
+    res.writeHead(403);
+    return res.end("Forbidden");
+  }
 
-  const relPath = filePath.slice(ROOT.length);
-  const blockedNames = ['.git', '.env', '.env.local', '.env.production', 'docker-compose.yml', 'Dockerfile', 'package-lock.json'];
+  // Block hidden files and env vars just in case they are in public/
+  const relPath = filePath.slice(PUBLIC_DIR.length);
+  const blockedNames = ['.git', '.env', '.env.local', '.env.production', '.DS_Store'];
   const parts = relPath.split('/');
-  if (parts.some(p => blockedNames.includes(p)) || relPath === '/index.js') {
+  if (parts.some(p => blockedNames.includes(p))) {
     res.writeHead(403); return res.end("Forbidden");
   }
 
   try {
-    await access(filePath);
-    const content = await readFile(filePath);
-    const type = MIME[extname(filePath)] || "application/octet-stream";
+    const stats = await stat(filePath);
+    let finalPath = filePath;
+
+    // 🚀 NEW: If it's a directory, automatically look for index.html
+    if (stats.isDirectory()) {
+      finalPath = join(filePath, 'index.html');
+    }
+
+    const content = await readFile(finalPath);
+    const type = MIME[extname(finalPath)] || "application/octet-stream";
     res.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
     res.end(content);
-  } catch { res.writeHead(404); res.end("Not Found"); }
+  } catch {
+    res.writeHead(404);
+    res.end("Not Found");
+  }
 }
 
 function checkGitAuth(req, res, ip) {
@@ -348,7 +349,6 @@ const server = createServer(async (req, res) => {
     let path = url.pathname;
     const ip = getClientIp(req);
 
-    // 1. Internal Git Commit API (Protected by Per-Component Token)
     if (path === "/_forest/commit" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
       const componentName = componentTokens.get(token);
@@ -361,7 +361,7 @@ const server = createServer(async (req, res) => {
       let body = "";
       req.on("data", chunk => {
         body += chunk;
-        if (body.length > 1e6) req.destroy(); // 1MB safety limit
+        if (body.length > 1e6) req.destroy();
       });
       req.on("end", async () => {
         try {
@@ -369,7 +369,6 @@ const server = createServer(async (req, res) => {
           let files = payload.files || [];
           if (!Array.isArray(files)) files = [files];
 
-          // FIX 2: Validate that all files are strictly within the calling component's directory
           const componentPrefix = `${componentName}/`;
           const isSafe = files.every(f => typeof f === 'string' && (f.startsWith(componentPrefix) || f === componentName));
 
@@ -392,13 +391,11 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // 2. Public Health Endpoint (Simple, safe for external monitoring)
     if (path === "/_forest/health" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/plain" });
       return res.end("OK");
     }
 
-    // 3. Internal Forest Status Endpoint (Detailed stats, protected by component token)
     if (path === "/_forest/status" && req.method === "GET") {
       const token = req.headers['x-forest-token'];
       const componentName = componentTokens.get(token);
@@ -440,11 +437,6 @@ const server = createServer(async (req, res) => {
 
     if (path.startsWith("/git")) return handleGit(req, res, ip);
 
-    if (path === "/" || path === "") {
-      req.url = "/index.html";
-      return serveStatic(req, res);
-    }
-
     const segment = path.split("/")[1];
     if (segment && components.has(segment)) {
       if (path === `/${segment}`) {
@@ -454,7 +446,9 @@ const server = createServer(async (req, res) => {
       return proxyToComponent(req, res, segment);
     }
 
+    // 🚀 NEW: Fallback to public/ static server (handles / automatically)
     await serveStatic(req, res);
+
   } catch (err) {
     console.error("[core] Unhandled error:", err);
     if (!res.headersSent) res.writeHead(500, { "Content-Type": "text/plain" });
@@ -469,7 +463,6 @@ process.on('SIGTERM', () => {
 });
 
 async function boot() {
-  // Self-healing: Clean up stale git locks from previous container crashes
   const lockFiles = ['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'];
   for (const lock of lockFiles) {
     await unlink(join(ROOT, lock)).catch(() => { });
@@ -477,7 +470,7 @@ async function boot() {
 
   const entries = await readdir(ROOT, { withFileTypes: true });
   for (const entry of entries) {
-    if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
+    if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
       if (existsSync(join(ROOT, entry.name, "index.js"))) await swapComponent(entry.name);
     }
   }
@@ -488,8 +481,6 @@ async function boot() {
   });
 }
 boot();
-
-
 
 /*
 // Inside your component (e.g., poll/index.js)
