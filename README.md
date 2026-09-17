@@ -26,9 +26,48 @@ All of this is achieved in ~200 lines of pure Node.js, using **zero external dep
 | **Worker** | The isolated Node.js process spawned by the core to run a specific component. Workers communicate with the core via Unix domain sockets (`/tmp/forest-<name>.sock`). |
 | **Static Assets** | Any root-level directory *without* an `index.js` (e.g., `/public`, `/images`). The core serves these files directly. |
 
+
 ### How Routing Works
 The core automatically strips the component name from the URL. 
 If a user visits `/poll/vote`, the core proxies the request to the `poll` worker with the path `/vote`. **Components are entirely path-agnostic.** You can rename the `poll` directory to `survey`, and the code inside requires zero changes.
+
+---
+
+## Local Development
+
+### macOS Setup
+
+On macOS, the Git HTTP backend binary location varies depending on how Git was installed. git-forest automatically discovers the correct path, but you can override it if needed:
+
+```bash
+# Option 1: Let git-forest auto-discover (recommended)
+node index.js
+
+# Option 2: Explicitly set the path if auto-discovery fails
+export GIT_HTTP_BACKEND="/opt/homebrew/libexec/git-core/git-http-backend"  # Homebrew Apple Silicon
+# or
+export GIT_HTTP_BACKEND="/usr/local/libexec/git-core/git-http-backend"     # Homebrew Intel
+# or
+export GIT_HTTP_BACKEND="/Library/Developer/CommandLineTools/usr/libexec/git-core/git-http-backend"  # Xcode CLT
+node index.js
+```
+
+Common Git installation paths on macOS:
+- **Homebrew (Apple Silicon)**: `/opt/homebrew/libexec/git-core/git-http-backend`
+- **Homebrew (Intel)**: `/usr/local/libexec/git-core/git-http-backend`
+- **Xcode Command Line Tools**: `/Library/Developer/CommandLineTools/usr/libexec/git-core/git-http-backend`
+- **Official Git Installer**: `/usr/local/git/libexec/git-core/git-http-backend`
+
+### Linux/Alpine Setup
+
+On Linux and Alpine, the standard path is typically `/usr/libexec/git-core/git-http-backend`, which git-forest uses as the default fallback.
+
+### Environment Variables
+
+- `PORT`: HTTP server port (default: 3000)
+- `GIT_SECRET`: Required for Git push/pull authentication over HTTP
+- `TRUST_PROXY`: Set to `1` if behind a reverse proxy (Traefik, Caddy, etc.)
+- `GIT_HTTP_BACKEND`: Optional override for Git HTTP backend binary path
 
 ---
 
@@ -153,6 +192,58 @@ async function commitData(message) {
 }
 ```
 *Note: For high-volume write components, debounce the `commitData` function to prevent Git lock contention.*
+
+---
+
+## Observability & Health Checks
+
+### Public Health Endpoint
+
+git-forest includes a simple public health check endpoint at `/_forest/health`:
+
+```bash
+curl http://localhost:3000/_forest/health
+# Returns: OK
+```
+
+This endpoint is designed for external monitoring systems (Coolify, load balancers, etc.) and requires no authentication. It returns a simple "OK" response to indicate the server is running.
+
+### Internal Status Endpoint
+
+For detailed system information accessible only to components, use `/_forest/status`:
+
+```javascript
+// Inside a component, using the component token
+const res = await fetch(`http://localhost:${process.env.FOREST_CORE_PORT}/_forest/status`, {
+  headers: { 'x-forest-token': process.env.FOREST_COMPONENT_TOKEN }
+});
+const status = await res.json();
+```
+
+This returns detailed JSON with:
+- `status`: Overall health status
+- `uptime`: Server uptime in milliseconds and human-readable format
+- `components`: List of active components with their PID, socket path, and uptime
+- `component_count`: Number of active components
+- `git_auth_enabled`: Whether Git authentication is configured
+- `proxy_trust_enabled`: Whether proxy trust is enabled
+- `git_http_backend`: Path to the Git HTTP backend binary
+- `is_reloading`: Whether a hot reload is currently in progress
+- `requested_by`: Name of the component requesting the status
+
+This endpoint is protected by the component token system and is intended for internal monitoring and debugging.
+
+### Coolify Integration
+
+For Coolify container health monitoring, configure the health check path as `/_forest/health`:
+
+```bash
+# In Coolify container settings
+Health Check Path: /_forest/health
+Health Check Interval: 30s
+```
+
+The public health endpoint is intentionally simple and safe - it costs nothing to abuse and provides no sensitive information, making it perfect for external monitoring.
 
 ---
 

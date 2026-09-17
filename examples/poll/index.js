@@ -5,8 +5,8 @@ import { execFile } from 'node:child_process'; // 🚀 Changed from exec
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile); // 🚀 Changed from execAsync
-const DIR = process.env.TISSUE_DIR;
-const NAME = process.env.TISSUE_NAME;
+const DIR = process.env.COMPONENT_DIR;
+const NAME = process.env.COMPONENT_NAME;
 const VOTES_FILE = join(DIR, 'votes.md');
 
 // The Git repository root is the parent of the component directory
