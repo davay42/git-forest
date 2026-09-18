@@ -185,6 +185,150 @@ The core orchestrator includes several production-hardened security features:
 Because the server commits data to Git, your local branch may fall behind the remote. 
 **The Golden Rule:** Always run `git pull --rebase` locally before pushing new code to ensure you don't overwrite data committed by the live server. For extremely high-churn data (like chat logs or analytics), add the data folder to `.gitignore` and rely purely on the persistent Docker volume.
 
+
+Here is the distilled `.gitignore` guide block, written to slot directly into the README.
+
+---
+
+## The `.gitignore` Contract: Code, Knowledge, and Soil
+
+Every byte in a git-forest belongs to one of three substances. The `.gitignore` file is the contract that draws the boundary between them.
+
+| Substance | What it is | Persistence | Example |
+| :--- | :--- | :--- | :--- |
+| **Code** | The context. Logic that transforms inputs into meaning. | Versioned | `index.js`, `public/styles.css` |
+| **Knowledge** | Data that has been given context. Semantic, auditable, portable. | Versioned | `votes.md`, `state/users/alice.md` |
+| **Soil** | Raw, unprocessed accumulation. The nutrients before photosynthesis. | Ephemeral | `clicks.jsonl`, `sessions/`, `cache/` |
+
+**The core flow of git-forest is photosynthesis:** components absorb raw data from the soil, apply the context of code, and elevate it into knowledge that reaches the light — visible to users, readable by AI agents, and preserved in Git history.
+
+### The Rule
+
+> **Anything not in `.gitignore` is committed. Anything in `.gitignore` is sovereign to this container.**
+
+This is a **whitelist-by-absence** policy. If a component writes a file that isn't declared in its `.gitignore`, that file gets committed and the developer sees it in `git log`. Leaks are visible by default. Silence is not safety — visibility is safety.
+
+### Component-Level Data Contracts
+
+Each component declares its own boundary. Git natively supports hierarchical `.gitignore` files, so every folder is its own policy domain:
+
+```gitignore
+# poll/.gitignore
+# ─── Soil (ephemeral, sovereign to this container) ───
+clicks.jsonl
+sessions/
+cache/
+*.tmp
+
+# Everything not listed above is Knowledge.
+# It will be committed, versioned, and backed up automatically.
+```
+
+The root `.gitignore` handles global infrastructure:
+
+```gitignore
+# .gitignore (root)
+node_modules/
+.env
+.env.*
+*.sqlite
+*.log
+.DS_Store
+```
+
+### The Distillation Pattern
+
+Components are responsible for their own photosynthesis — transforming soil into knowledge:
+
+```
+clicks.jsonl (soil)  →  aggregate()  →  state/activity.md (knowledge)
+  "click at 14:02"       code is the      Alice clicked [47] {+click:alice click:count ^^xsd:integer} times
+  "click at 14:05"       context            .prov:Activity
+```
+
+1. **Accumulate** raw events in a `.gitignore`d path.
+2. **Distill** them into semantic knowledge using code.
+3. **Commit** the knowledge via the core's centralized Git queue.
+4. **Truncate** the soil when it has been fully consumed.
+
+### What You Get on Restore
+
+When you clone the forest from backup, you receive **all the code and all the knowledge**. You receive **none of the soil**. This is correct. The knowledge is the meaning. The soil was just the fuel. A new instance boots with full understanding of what the system knows, without the noise of how it learned it. 🌲
+
+### Example Pipeline
+
+```
+Stripe webhooks ──→ purchases.sqlite ──→ regenerate() ──→ active-students.md
+                    (soil: ignored)       (code: context)     (knowledge: committed)
+                    
+                    10,000 rows           the lens            the projection
+                    mutable               deterministic       readable
+                    queryable             pure function       diffable
+                    regenerable                               versioned
+```
+
+### Why Git Makes This Perfect
+
+When you commit `active-students.md`, Git doesn't store the whole file every time. It stores the **delta**. 
+
+After a year of daily regeneration, your Git history contains:
+
+```
+a3f2c1d  knowledge: active students  (added: alice@uni.edu)
+8b1e4f2  knowledge: active students  (removed: bob@corp.io, added: carol@lab.org)
+7d9a0c3  knowledge: active students  (added: dave@school.edu)
+```
+
+This is a **compressed, immutable, auditable timeline** of every student activation and deactivation that ever occurred. No database required. No migration scripts. No audit log tables. Just `git log`.
+
+### The Three Guarantees
+
+This pattern gives you three properties that no traditional database provides simultaneously:
+
+**1. The knowledge is always current.**
+The committed `active-students.md` is always the latest projection. An LLM agent, a dashboard, or a human can read it at any time without querying a database. It is a *living document*.
+
+**2. The knowledge is always reconstructable.**
+If the knowledge file is corrupted or deleted, you regenerate it from the soil. The soil is the source of truth. The knowledge is a cache. But unlike a normal cache, this one has a perfect history.
+
+**3. The knowledge is always time-traversable.**
+Want to know who was active on March 15th? `git checkout <march-15-commit> -- active-students.md`. No temporal tables. No `AS OF` clauses. Just Git.
+
+### The Practical Pattern
+
+```javascript
+// Inside your component: the regeneration function
+async function regenerateKnowledge() {
+  // 1. Query the soil (ignored SQLite database)
+  const students = await queryPurchasesDb(`
+    SELECT email, first_purchase_date 
+    FROM purchases 
+    WHERE status = 'active' 
+    ORDER BY first_purchase_date ASC
+  `);
+
+  // 2. Project into knowledge (MD-LD quads)
+  let md = '[cs] <tag:cs@local,2026:>\n\n# Active Students\n\n';
+  md += `_Last regenerated: ${new Date().toISOString()}_\n\n`;
+  
+  for (const s of students) {
+    md += `- [${s.first_purchase_date}] {+cs:student/${s.email} .cs:ActiveStudent ?cs:firstPurchase}\n`;
+  }
+
+  // 3. Write knowledge
+  await writeFile('state/active-students.md', md);
+
+  // 4. Commit via centralized queue
+  await commitToForest(
+    ['state/active-students.md'], 
+    `knowledge: active students (${students.length})`
+  );
+}
+```
+
+The soil accumulates continuously. The knowledge regenerates on a schedule (every hour, every webhook, every cron tick). Git stores only the changes. The history is perfect. The current state is always readable. The past is always queryable.
+
+
 ---
 
 ## Why Build This?

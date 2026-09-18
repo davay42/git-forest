@@ -5,6 +5,7 @@ RUN apk add --no-cache git git-daemon
 WORKDIR /opt/git-forest-seed
 COPY index.js .
 COPY post-receive.txt .
+COPY .gitignore .
 # COPY examples ./examples/ 
 
 WORKDIR /app

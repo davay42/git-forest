@@ -1,4 +1,7 @@
-# Local state and secrets
-.env
-*.sqlite
+# .gitignore (root)
 node_modules/
+.env
+.env.*
+*.sqlite
+*.log
+.DS_Store
