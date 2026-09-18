@@ -342,8 +342,6 @@ function proxyToComponent(req, res, segment) {
   req.pipe(proxyReq);
 }
 
-const GITHUB_BACKUP_URL = process.env.GITHUB_BACKUP_URL;
-
 // ─── BACKGROUND BACKUP SYNC ────────────────────────────────────────────
 async function syncToBackup() {
   if (!GITHUB_BACKUP_URL) return;
