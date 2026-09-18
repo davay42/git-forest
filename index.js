@@ -342,15 +342,43 @@ function proxyToComponent(req, res, segment) {
   req.pipe(proxyReq);
 }
 
+const GITHUB_BACKUP_URL = process.env.GITHUB_BACKUP_URL;
+
 // ─── BACKGROUND BACKUP SYNC ────────────────────────────────────────────
 async function syncToBackup() {
   if (!GITHUB_BACKUP_URL) return;
+
   try {
-    // Push the local 'main' branch directly to the backup URL
-    await execFileAsync('git', ['push', GITHUB_BACKUP_URL, 'main'], { cwd: ROOT });
-    // console.log('[backup] ✅ Synced to GitHub'); // Uncomment for verbose logging
+    // 1. Ensure the 'backup' remote exists locally (Local operation)
+    try {
+      await execFileAsync('git', ['remote', 'get-url', 'backup'], { cwd: ROOT });
+    } catch {
+      // If it doesn't exist, add it
+      await execFileAsync('git', ['remote', 'add', 'backup', GITHUB_BACKUP_URL], { cwd: ROOT });
+    }
+
+    // 2. Check if local 'main' has commits that 'backup/main' doesn't have.
+    // This checks the LOCAL Git database. NO network ping occurs here.
+    let needsPush = true;
+    try {
+      const { stdout: count } = await execFileAsync('git', ['rev-list', '--count', 'backup/main..main'], { cwd: ROOT });
+      if (parseInt(count.trim(), 10) === 0) {
+        needsPush = false; // We are perfectly in sync
+      }
+    } catch {
+      // If the 'backup/main' tracking ref doesn't exist yet (first run), we need to push
+      needsPush = true;
+    }
+
+    // 3. Abort if there's nothing to do
+    if (!needsPush) return;
+
+    // 4. Push only when necessary (Network operation)
+    console.log(`[backup] 🔄 New commits detected. Pushing to GitHub...`);
+    await execFileAsync('git', ['push', 'backup', 'main'], { cwd: ROOT });
+    console.log('[backup] ✅ Synced to GitHub');
+
   } catch (err) {
-    // Git push exits 0 if up-to-date, so errors here are actual failures
     console.error('[backup] ⚠️ Sync failed:', err.stderr || err.message);
   }
 }
