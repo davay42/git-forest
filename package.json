@@ -1,5 +1,5 @@
 {
-  "name": "git-forest",
+  "name": "@davay/git-forest",
   "version": "1.0.0",
   "description": "A zero-dependency Node.js runtime where the filesystem is the router, directories are isolated components, and Git is the deployment mechanism.",
   "type": "module",

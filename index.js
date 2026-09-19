@@ -580,6 +580,13 @@ async function freshInit() {
     await execFileAsync('git', ['config', 'user.name', 'Forest Server'], { cwd: ROOT });
     await execFileAsync('git', ['config', 'receive.denyCurrentBranch', 'updateInstead'], { cwd: ROOT });
 
+    await execFileAsync('git', ['add', '.'], { cwd: ROOT });
+    const { stdout: staged } = await execFileAsync('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
+    if (staged.trim()) {
+      await execFileAsync('git', ['commit', '-m', 'chore: initial forest seed'], { cwd: ROOT });
+      console.log('[boot] ✅ Initial files committed to Git.');
+    }
+
     console.log('[boot] ✅ Git repository initialized and configured.');
   } catch (err) {
     console.error('[boot] ⚠️ Failed to initialize Git:', err.message);
