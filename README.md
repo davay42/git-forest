@@ -1,7 +1,3 @@
-Here is the fully updated, definitive `README.md`. It captures the entire evolution of the project, from the initial philosophy to the hardened, zero-touch production architecture we just finalized.
-
-***
-
 # git-forest
 
 > A zero-dependency Node.js runtime where the filesystem is the router, directories are isolated components, and Git is the deployment mechanism. 
