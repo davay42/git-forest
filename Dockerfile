@@ -1,6 +1,6 @@
 FROM node:22-alpine
 
-RUN apk add --no-cache git git-daemon
+RUN apk add git git-daemon
 
 WORKDIR /opt/git-forest-seed
 COPY index.js .

@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { createServer, request, Agent } from "node:http";
 import { spawn, execFile } from "node:child_process";
 import { readdir, readFile, unlink, stat } from "node:fs/promises"; // Added stat, removed access
@@ -529,21 +531,3 @@ async function boot() {
 }
 boot();
 
-/*
-// Inside your component (e.g., poll/index.js)
-async function commitToForest(files, message) {
-  try {
-    const res = await fetch(`http://localhost:${process.env.FOREST_CORE_PORT}/_forest/commit`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-forest-token': process.env.FOREST_COMPONENT_TOKEN // Updated env var
-      },
-      body: JSON.stringify({ files, message })
-    });
-    return res.json();
-  } catch (err) {
-    console.error('[component] Failed to request commit:', err);
-  }
-}
-*/
