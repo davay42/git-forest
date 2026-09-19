@@ -536,6 +536,21 @@ process.on('SIGTERM', () => {
   setTimeout(() => process.exit(1), 5000).unref();
 });
 
+// 🚀 NEW: Ensures the Git hook always has the current boot's RELOAD_TOKEN
+async function ensureGitHook() {
+  const hooksDir = join(ROOT, '.git', 'hooks');
+  if (!existsSync(hooksDir)) await mkdir(hooksDir, { recursive: true });
+
+  const hookPath = join(hooksDir, 'post-receive');
+  const hookContent = `#!/bin/sh
+# Trigger the Forest Core to reload workers after a remote git push
+curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
+`;
+
+  // Overwrite unconditionally. It's 200 bytes and takes <1ms.
+  await writeFile(hookPath, hookContent, { mode: 0o755 });
+}
+
 async function freshInit() {
   console.log('[boot] 🌱 Initializing fresh Git repository...');
   try {
@@ -544,37 +559,22 @@ async function freshInit() {
     await execFileAsync('git', ['config', 'user.name', 'Forest Server'], { cwd: ROOT });
     await execFileAsync('git', ['config', 'receive.denyCurrentBranch', 'updateInstead'], { cwd: ROOT });
 
-    const hooksDir = join(ROOT, '.git', 'hooks');
-    if (!existsSync(hooksDir)) await mkdir(hooksDir, { recursive: true });
-
-    const hookPath = join(hooksDir, 'post-receive');
-
-    // 🚀 NEW: Inject the RELOAD_TOKEN into the curl header
-    const hookContent = `#!/bin/sh
-# Trigger the Forest Core to reload workers after a remote git push
-curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
-`;
-
-    await writeFile(hookPath, hookContent, { mode: 0o755 });
-
-    console.log('[boot] ✅ Git repository initialized, configured, and hooked.');
+    console.log('[boot] ✅ Git repository initialized and configured.');
   } catch (err) {
     console.error('[boot] ⚠️ Failed to initialize Git:', err.message);
   }
 }
 
 async function boot() {
-  // Self-healing: Clean up stale git locks from previous container crashes
+  // 1. Clean up stale locks
   const lockFiles = ['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'];
   for (const lock of lockFiles) {
     await unlink(join(ROOT, lock)).catch(() => { });
   }
 
-  // 🚀 AUTONOMOUS GIT SETUP & RESTORE
+  // 2. Ensure Git Repository Exists
   if (!existsSync(join(ROOT, '.git'))) {
     console.log('[boot] 🌱 No Git repository found.');
-
-    // If a backup URL is provided, try to restore from it first
     if (GITHUB_BACKUP_URL) {
       console.log('[boot] 🔄 Attempting to restore from GitHub backup...');
       try {
@@ -589,7 +589,11 @@ async function boot() {
     }
   }
 
-  // Mount Components
+  // 🚀 3. CRITICAL: Always sync the hook with the current RAM token
+  await ensureGitHook();
+  console.log('[boot] 🪝 Git post-receive hook synced with current reload token.');
+
+  // 4. Mount Components
   const entries = await readdir(ROOT, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
