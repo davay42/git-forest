@@ -1,6 +1,0 @@
-#!/bin/sh
-while read oldrev newrev refname; do
-    if [ "$oldrev" = "0000000000000000000000000000000000000000" ]; then kill -HUP 1; continue; fi
-    if [ "$newrev" = "0000000000000000000000000000000000000000" ]; then continue; fi
-    if git diff --name-only $oldrev $newrev | grep -q "^index.js$"; then kill -TERM 1; exit 0; else kill -HUP 1; fi
-done
