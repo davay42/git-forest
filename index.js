@@ -2,7 +2,7 @@
 
 import { createServer, request, Agent } from "node:http";
 import { spawn, execFile } from "node:child_process";
-import { readdir, readFile, unlink, stat } from "node:fs/promises"; // Added stat, removed access
+import { readdir, readFile, unlink, stat, mkdir, writeFile } from "node:fs/promises"; // Added stat, removed access
 import { join, extname } from "node:path";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
@@ -545,7 +545,6 @@ async function freshInit() {
     await execFileAsync('git', ['config', 'receive.denyCurrentBranch', 'updateInstead'], { cwd: ROOT });
 
     const hooksDir = join(ROOT, '.git', 'hooks');
-    const { mkdir, writeFile } = await import('node:fs/promises');
     if (!existsSync(hooksDir)) await mkdir(hooksDir, { recursive: true });
 
     const hookPath = join(hooksDir, 'post-receive');
