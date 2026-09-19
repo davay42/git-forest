@@ -17,6 +17,8 @@ const GIT_SECRET = process.env.GIT_SECRET;
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const GITHUB_BACKUP_URL = process.env.GITHUB_BACKUP_URL;
 
+const RELOAD_TOKEN = crypto.randomBytes(16).toString('hex');
+
 // ─── GIT HTTP BACKEND DISCOVERY ───────────────────────────────────────────
 function discoverGitHttpBackend() {
   if (process.env.GIT_HTTP_BACKEND) return process.env.GIT_HTTP_BACKEND;
@@ -252,6 +254,18 @@ async function serveStatic(req, res) {
     res.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
     res.end(content);
   } catch {
+    // 🚀 NEW: Beautiful First-Run Fallback
+    if (url.pathname === '/' || url.pathname === '/index.html') {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      return res.end(`<!DOCTYPE html><html><body style="font-family:system-ui;max-width:600px;margin:4rem auto;text-align:center;color:#1a1a1a;">
+        <h1>🌲 git-forest is running!</h1>
+        <p>Your forest is alive, but the canopy is empty.</p>
+        <p>Create a <code>public/index.html</code> file to build your frontend, or add a folder with an <code>index.js</code> to create a backend component.</p>
+        <hr style="margin:2rem 0;border:none;border-top:1px solid #e5e7eb;">
+        <p style="color:#6b7280;font-size:0.9rem;">Active Components: <strong>${components.size}</strong></p>
+        <ul style="list-style:none;padding:0;">${[...components.keys()].map(c => `<li><a href="/${c}" style="color:#2563eb;">/${c}</a></li>`).join('') || '<li style="color:#9ca3af;">None yet. Create a directory with an index.js to start.</li>'}</ul>
+      </body></html>`);
+    }
     res.writeHead(404);
     res.end("Not Found");
   }
@@ -438,6 +452,24 @@ const server = createServer(async (req, res) => {
       return res.end("OK");
     }
 
+
+    if (path === "/_forest/reload" && req.method === "POST") {
+      const token = req.headers['x-forest-token'];
+
+      // Validate: Must match the boot-generated hook token OR the global Git secret
+      const isValid = (token === RELOAD_TOKEN) || (GIT_SECRET && timingSafeEqualStr(token, GIT_SECRET));
+
+      if (!isValid) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        return res.end("Forbidden: Invalid reload token");
+      }
+
+      console.log("[sync] 🔄 Reload requested via secure token.");
+      process.kill(process.pid, 'SIGHUP');
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      return res.end("Reload triggered");
+    }
+
     if (path === "/_forest/status" && req.method === "GET") {
       const token = req.headers['x-forest-token'];
       const componentName = componentTokens.get(token);
@@ -504,12 +536,61 @@ process.on('SIGTERM', () => {
   setTimeout(() => process.exit(1), 5000).unref();
 });
 
+async function freshInit() {
+  console.log('[boot] 🌱 Initializing fresh Git repository...');
+  try {
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: ROOT });
+    await execFileAsync('git', ['config', 'user.email', 'forest@local'], { cwd: ROOT });
+    await execFileAsync('git', ['config', 'user.name', 'Forest Server'], { cwd: ROOT });
+    await execFileAsync('git', ['config', 'receive.denyCurrentBranch', 'updateInstead'], { cwd: ROOT });
+
+    const hooksDir = join(ROOT, '.git', 'hooks');
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    if (!existsSync(hooksDir)) await mkdir(hooksDir, { recursive: true });
+
+    const hookPath = join(hooksDir, 'post-receive');
+
+    // 🚀 NEW: Inject the RELOAD_TOKEN into the curl header
+    const hookContent = `#!/bin/sh
+# Trigger the Forest Core to reload workers after a remote git push
+curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
+`;
+
+    await writeFile(hookPath, hookContent, { mode: 0o755 });
+
+    console.log('[boot] ✅ Git repository initialized, configured, and hooked.');
+  } catch (err) {
+    console.error('[boot] ⚠️ Failed to initialize Git:', err.message);
+  }
+}
+
 async function boot() {
+  // Self-healing: Clean up stale git locks from previous container crashes
   const lockFiles = ['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'];
   for (const lock of lockFiles) {
     await unlink(join(ROOT, lock)).catch(() => { });
   }
 
+  // 🚀 AUTONOMOUS GIT SETUP & RESTORE
+  if (!existsSync(join(ROOT, '.git'))) {
+    console.log('[boot] 🌱 No Git repository found.');
+
+    // If a backup URL is provided, try to restore from it first
+    if (GITHUB_BACKUP_URL) {
+      console.log('[boot] 🔄 Attempting to restore from GitHub backup...');
+      try {
+        await execFileAsync('git', ['clone', GITHUB_BACKUP_URL, '.'], { cwd: ROOT });
+        console.log('[boot] ✅ Successfully restored from backup.');
+      } catch (err) {
+        console.error('[boot] ⚠️ Clone failed. Falling back to fresh init.', err.message);
+        await freshInit();
+      }
+    } else {
+      await freshInit();
+    }
+  }
+
+  // Mount Components
   const entries = await readdir(ROOT, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
@@ -517,10 +598,11 @@ async function boot() {
     }
   }
 
+  // Start Backup Sync
   if (GITHUB_BACKUP_URL) {
     console.log(`[backup] 🔄 GitHub backup enabled. Syncing every 5 minutes.`);
-    setTimeout(syncToBackup, 10000); // Initial sync 10s after boot
-    setInterval(syncToBackup, 5 * 60 * 1000); // Every 5 mins
+    setTimeout(syncToBackup, 10000);
+    setInterval(syncToBackup, 5 * 60 * 1000);
   }
 
   server.listen(PORT, () => {
@@ -529,5 +611,6 @@ async function boot() {
     console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
   });
 }
+
 boot();
 
