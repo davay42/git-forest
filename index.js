@@ -2,7 +2,7 @@
 
 import { createServer, request, Agent } from "node:http";
 import { spawn, execFile } from "node:child_process";
-import { readdir, readFile, unlink, stat, mkdir, writeFile } from "node:fs/promises"; // Added stat, removed access
+import { readdir, readFile, unlink, stat, mkdir, writeFile } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
@@ -12,14 +12,13 @@ const execFileAsync = promisify(execFile);
 
 const PORT = process.env.PORT || 3000;
 const ROOT = process.cwd();
-const PUBLIC_DIR = join(ROOT, 'public'); // 🚀 NEW: Strict static boundary
+const PUBLIC_DIR = join(ROOT, 'public');
 const GIT_SECRET = process.env.GIT_SECRET;
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const GITHUB_BACKUP_URL = process.env.GITHUB_BACKUP_URL;
 
 const RELOAD_TOKEN = crypto.randomBytes(16).toString('hex');
 
-// ─── GIT HTTP BACKEND DISCOVERY ───────────────────────────────────────────
 function discoverGitHttpBackend() {
   if (process.env.GIT_HTTP_BACKEND) return process.env.GIT_HTTP_BACKEND;
   const commonPaths = [
@@ -45,7 +44,6 @@ const componentTokens = new Map();
 let isReloading = false;
 const startTime = Date.now();
 
-// ─── CENTRALIZED GIT QUEUE (MUTEX) ─────────────────────────────────────
 let gitQueue = Promise.resolve();
 
 async function queueGitCommit(files, message) {
@@ -79,7 +77,6 @@ async function queueGitCommit(files, message) {
   }
 }
 
-// ─── SECURITY UTILITIES ────────────────────────────────────────────────
 function timingSafeEqualStr(a, b) {
   const bufA = Buffer.from(String(a)), bufB = Buffer.from(String(b));
   if (bufA.length !== bufB.length) return false;
@@ -123,7 +120,6 @@ function addSecurityHeaders(res) {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 }
 
-// ─── ZERO-DOWNTIME SWAP LOGIC (HARDENED) ───────────────────────────────
 async function swapComponent(name) {
   const oldComponent = components.get(name);
   const newSocketPath = `/tmp/forest-${name}-${Date.now()}.sock`;
@@ -219,20 +215,14 @@ process.on("SIGHUP", async () => {
   finally { isReloading = false; }
 });
 
-// ─── HTTP HANDLING ─────────────────────────────────────────────────────
 async function serveStatic(req, res) {
   const url = new URL(req.url, "http://localhost");
-  // Strip leading slashes to prevent path traversal via //../
   const safePath = decodeURIComponent(url.pathname).replace(/^\/+/, '');
   const filePath = join(PUBLIC_DIR, safePath);
-
-  // Strict boundary check: MUST be inside PUBLIC_DIR
   if (!filePath.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
     return res.end("Forbidden");
   }
-
-  // Block hidden files and env vars just in case they are in public/
   const relPath = filePath.slice(PUBLIC_DIR.length);
   const blockedNames = ['.git', '.env', '.env.local', '.env.production', '.DS_Store'];
   const parts = relPath.split('/');
@@ -243,12 +233,9 @@ async function serveStatic(req, res) {
   try {
     const stats = await stat(filePath);
     let finalPath = filePath;
-
-    // 🚀 NEW: If it's a directory, automatically look for index.html
     if (stats.isDirectory()) {
       finalPath = join(filePath, 'index.html');
     }
-
     const content = await readFile(finalPath);
     const type = MIME[extname(finalPath)] || "application/octet-stream";
     res.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
@@ -273,13 +260,11 @@ async function serveStatic(req, res) {
 
 function checkGitAuth(req, res, ip) {
   if (!GIT_SECRET) return "git-user";
-
   if (isRateLimited(ip)) {
     res.writeHead(429, { "Content-Type": "text/plain" });
     res.end("Too many failed attempts. Try again later.");
     return null;
   }
-
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Basic ")) {
     recordFailedAuth(ip);
@@ -290,7 +275,6 @@ function checkGitAuth(req, res, ip) {
   const base64 = auth.split(" ")[1];
   const credentials = Buffer.from(base64, "base64").toString("utf-8");
   const [user, password] = credentials.split(":");
-
   if (!password || !timingSafeEqualStr(password, GIT_SECRET)) {
     recordFailedAuth(ip);
     res.writeHead(403, { "Content-Type": "text/plain" });
@@ -303,7 +287,6 @@ function checkGitAuth(req, res, ip) {
 function handleGit(req, res, ip) {
   const remoteUser = checkGitAuth(req, res, ip);
   if (!remoteUser) return;
-
   const url = new URL(req.url, "http://localhost");
   const env = {
     ...process.env,
@@ -318,9 +301,7 @@ function handleGit(req, res, ip) {
     REMOTE_USER: remoteUser,
   };
   const git = spawn(GIT_HTTP_BACKEND, [], { env });
-  if (req.method === "POST" && req.headers["content-length"]) req.pipe(git.stdin);
-  else git.stdin.end();
-
+  if (req.method === "POST" && req.headers["content-length"]) { req.pipe(git.stdin) } else { git.stdin.end(); }
   let buf = Buffer.alloc(0), parsed = false;
   git.stdout.on("data", (chunk) => {
     if (parsed) return res.write(chunk);
@@ -367,31 +348,24 @@ async function syncToBackup() {
   if (!GITHUB_BACKUP_URL) return;
 
   try {
-    // 1. Ensure the 'backup' remote exists locally (Local operation)
     try {
       await execFileAsync('git', ['remote', 'get-url', 'backup'], { cwd: ROOT });
     } catch {
-      // If it doesn't exist, add it
       await execFileAsync('git', ['remote', 'add', 'backup', GITHUB_BACKUP_URL], { cwd: ROOT });
     }
 
-    // 2. Check if local 'main' has commits that 'backup/main' doesn't have.
-    // This checks the LOCAL Git database. NO network ping occurs here.
     let needsPush = true;
     try {
       const { stdout: count } = await execFileAsync('git', ['rev-list', '--count', 'backup/main..main'], { cwd: ROOT });
       if (parseInt(count.trim(), 10) === 0) {
-        needsPush = false; // We are perfectly in sync
+        needsPush = false;
       }
     } catch {
-      // If the 'backup/main' tracking ref doesn't exist yet (first run), we need to push
       needsPush = true;
     }
 
-    // 3. Abort if there's nothing to do
     if (!needsPush) return;
 
-    // 4. Push only when necessary (Network operation)
     console.log(`[backup] 🔄 New commits detected. Pushing to GitHub...`);
     await execFileAsync('git', ['push', 'backup', 'main'], { cwd: ROOT });
     console.log('[backup] ✅ Synced to GitHub');
@@ -400,8 +374,6 @@ async function syncToBackup() {
     console.error('[backup] ⚠️ Sync failed:', err.stderr || err.message);
   }
 }
-
-// ─── THE GATEWAY ───────────────────────────────────────────────────────
 const server = createServer(async (req, res) => {
   try {
     addSecurityHeaders(res);
@@ -409,12 +381,10 @@ const server = createServer(async (req, res) => {
     let path = url.pathname;
     const ip = getClientIp(req);
 
-    const host = (req.headers.host || '').split(':')[0]; // Strip port (e.g., ":3000")
+    const host = (req.headers.host || '').split(':')[0];
     const parts = host.split('.');
     const subdomain = parts[0];
 
-    // If it's not localhost, has multiple parts (meaning it's a subdomain), 
-    // and the subdomain matches a known component -> Route it!
     if (host !== 'localhost' && host !== '127.0.0.1' && parts.length > 1 && components.has(subdomain)) {
       return proxyToComponent(req, res, subdomain, true); // true = isSubdomain
     }
@@ -470,7 +440,6 @@ const server = createServer(async (req, res) => {
     if (path === "/_forest/reload" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
 
-      // Validate: Must match the boot-generated hook token OR the global Git secret
       const isValid = (token === RELOAD_TOKEN) || (GIT_SECRET && timingSafeEqualStr(token, GIT_SECRET));
 
       if (!isValid) {
@@ -534,7 +503,6 @@ const server = createServer(async (req, res) => {
       return proxyToComponent(req, res, segment);
     }
 
-    // 🚀 NEW: Fallback to public/ static server (handles / automatically)
     await serveStatic(req, res);
 
   } catch (err) {
@@ -556,7 +524,6 @@ async function ensureGitHook() {
 
   const hookPath = join(hooksDir, 'post-receive');
 
-  // 🚀 FINAL ABSORPTION: The bash logic is now fully inside the Node template string
   const hookContent = `#!/bin/sh
 # Forest Git Hook - Dynamically generated by index.js
 while read oldrev newrev refname; do
@@ -593,28 +560,44 @@ async function freshInit() {
     await execFileAsync('git', ['config', 'user.email', 'forest@local'], { cwd: ROOT });
     await execFileAsync('git', ['config', 'user.name', 'Forest Server'], { cwd: ROOT });
     await execFileAsync('git', ['config', 'receive.denyCurrentBranch', 'updateInstead'], { cwd: ROOT });
-
     await execFileAsync('git', ['add', '.'], { cwd: ROOT });
     const { stdout: staged } = await execFileAsync('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
     if (staged.trim()) {
       await execFileAsync('git', ['commit', '-m', 'chore: initial forest seed'], { cwd: ROOT });
       console.log('[boot] ✅ Initial files committed to Git.');
     }
-
     console.log('[boot] ✅ Git repository initialized and configured.');
   } catch (err) {
     console.error('[boot] ⚠️ Failed to initialize Git:', err.message);
   }
 }
 
+async function healGitState() {
+  try {
+    const { stdout: status } = await execFileAsync('git', ['status', '--porcelain'], { cwd: ROOT });
+
+    if (status.trim()) {
+      console.log('[boot] 🩹 Dirty Git state detected. Healing...');
+      await execFileAsync('git', ['add', '-u'], { cwd: ROOT });
+      const { stdout: staged } = await execFileAsync('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
+      if (staged.trim()) {
+        await execFileAsync('git', ['commit', '-m', 'chore: auto-heal tracked files after boot'], { cwd: ROOT });
+        console.log('[boot] ✅ Tracked files healed and committed.');
+      } else {
+        console.log('[boot] ℹ️ Dirty state consists only of untracked files (likely component data). Left uncommitted to protect Git history.');
+      }
+    }
+  } catch (err) {
+    console.error('[boot] ⚠️ Git heal failed:', err.message);
+  }
+}
+
 async function boot() {
-  // 1. Clean up stale locks
+  await healGitState();
   const lockFiles = ['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'];
   for (const lock of lockFiles) {
     await unlink(join(ROOT, lock)).catch(() => { });
   }
-
-  // 2. Ensure Git Repository Exists
   if (!existsSync(join(ROOT, '.git'))) {
     console.log('[boot] 🌱 No Git repository found.');
     if (GITHUB_BACKUP_URL) {
@@ -631,11 +614,9 @@ async function boot() {
     }
   }
 
-  // 🚀 3. CRITICAL: Always sync the hook with the current RAM token
   await ensureGitHook();
   console.log('[boot] 🪝 Git post-receive hook synced with current reload token.');
 
-  // 4. Mount Components
   const entries = await readdir(ROOT, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
@@ -643,7 +624,6 @@ async function boot() {
     }
   }
 
-  // Start Backup Sync
   if (GITHUB_BACKUP_URL) {
     console.log(`[backup] 🔄 GitHub backup enabled. Syncing every 5 minutes.`);
     setTimeout(syncToBackup, 10000);
@@ -658,4 +638,3 @@ async function boot() {
 }
 
 boot();
-
