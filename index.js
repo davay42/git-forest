@@ -7,6 +7,7 @@ import { join, extname } from "node:path";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
+import net from "node:net";
 
 const execFileAsync = promisify(execFile);
 
@@ -636,69 +637,51 @@ async function boot() {
     console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
   });
 
-  // ─── WEBSOCKET UPGRADE HANDLER ────────────────────────────────────────────
+  // ─── WEBSOCKET UPGRADE HANDLER (DEBUG VERSION) ───────────────────────────
   server.on('upgrade', (req, socket, head) => {
     try {
       const url = new URL(req.url, "http://localhost");
       const path = url.pathname;
 
-      // Extract the component name from the first path segment
       const segment = path.split("/")[1];
 
       if (!segment || !components.has(segment)) {
+        console.log(`[ws] ❌ Component not found: ${segment}`);
         socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
         socket.destroy();
         return;
       }
 
       const component = components.get(segment);
+      console.log(`[ws] 🔌 Upgrading to /${segment} via ${component.socketPath}`);
 
-      // Strip the component prefix from the path
-      const prefixLength = segment.length + 1;
-      let strippedPath = path.slice(prefixLength);
-      if (!strippedPath.startsWith('/')) strippedPath = '/' + strippedPath;
-      strippedPath += url.search;
-
-      console.log(`[ws] 🔌 Upgrading connection to /${segment}${strippedPath}`);
-
-      // Connect to the component's Unix socket
-      const net = require('node:net');
       const componentSocket = net.connect(component.socketPath);
 
       componentSocket.on('connect', () => {
-        // Build the HTTP request line
-        let httpRequest = `${req.method} ${strippedPath} HTTP/1.1\r\n`;
+        console.log(`[ws] ✅ Connected to component socket`);
 
-        // Properly format headers (handle arrays for multi-value headers)
+        const strippedPath = path.slice(segment.length + 1) || '/';
+        const fullPath = strippedPath + url.search;
+
+        let httpRequest = `${req.method} ${fullPath} HTTP/1.1\r\n`;
         for (const [key, value] of Object.entries(req.headers)) {
           if (Array.isArray(value)) {
-            // Multiple values for the same header
-            for (const v of value) {
-              httpRequest += `${key}: ${v}\r\n`;
-            }
+            for (const v of value) httpRequest += `${key}: ${v}\r\n`;
           } else {
             httpRequest += `${key}: ${value}\r\n`;
           }
         }
-
         httpRequest += '\r\n';
 
-        // Write the HTTP request
         componentSocket.write(httpRequest);
+        if (head && head.length > 0) componentSocket.write(head);
 
-        // Write any buffered data from the upgrade
-        if (head && head.length > 0) {
-          componentSocket.write(head);
-        }
-
-        // Pipe bidirectional traffic
         socket.pipe(componentSocket);
         componentSocket.pipe(socket);
       });
 
-      // Handle connection errors
       componentSocket.on('error', (err) => {
-        console.error(`[ws] Component socket error:`, err.message);
+        console.error(`[ws] ❌ Component socket error:`, err.code, err.message);
         if (!socket.destroyed) {
           socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
           socket.destroy();
@@ -706,20 +689,22 @@ async function boot() {
       });
 
       socket.on('error', (err) => {
-        console.error(`[ws] Client socket error:`, err.message);
+        console.error(`[ws] ❌ Client socket error:`, err.code, err.message);
         componentSocket.destroy();
       });
 
       componentSocket.on('close', () => {
+        console.log(`[ws] 🔌 Component socket closed`);
         if (!socket.destroyed) socket.destroy();
       });
 
       socket.on('close', () => {
+        console.log(`[ws] 🔌 Client socket closed`);
         if (!componentSocket.destroyed) componentSocket.destroy();
       });
 
     } catch (err) {
-      console.error('[ws] Upgrade error:', err);
+      console.error('[ws] ❌ Upgrade handler exception:', err);
       if (!socket.destroyed) {
         socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
         socket.destroy();
