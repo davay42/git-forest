@@ -80,9 +80,14 @@ const server = createServer(async (req, res) => {
         <script>
           const btn = document.getElementById('btn');
           const countEl = document.getElementById('count');
-          const source = new EventSource('/${NAME}/events');
+          
+          // 🚀 FIX: Use relative paths ('events' and 'click') instead of absolute paths.
+          // Because git-forest guarantees a trailing slash on component roots (/test/ or /tunnel/test/),
+          // the browser resolves these perfectly within the current context.
+          const source = new EventSource('events');
           source.onmessage = (e) => countEl.textContent = JSON.parse(e.data).clicks;
-          btn.addEventListener('click', () => fetch('/${NAME}/click', { method: 'POST' }));
+          
+          btn.addEventListener('click', () => fetch('click', { method: 'POST' }));
         </script>
       </body>
       </html>
