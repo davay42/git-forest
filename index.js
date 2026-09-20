@@ -663,19 +663,31 @@ async function boot() {
 
       // Connect to the component's Unix socket
       const net = require('node:net');
-      const componentSocket = net.connect(component.socketPath, () => {
-        // Forward the original upgrade request to the component
-        const headers = Object.entries(req.headers)
-          .map(([k, v]) => `${k}: ${v}`)
-          .join('\r\n');
+      const componentSocket = net.connect(component.socketPath);
 
-        componentSocket.write(
-          `${req.method} ${strippedPath} HTTP/1.1\r\n` +
-          headers +
-          '\r\n\r\n'
-        );
+      componentSocket.on('connect', () => {
+        // Build the HTTP request line
+        let httpRequest = `${req.method} ${strippedPath} HTTP/1.1\r\n`;
 
-        if (head.length > 0) {
+        // Properly format headers (handle arrays for multi-value headers)
+        for (const [key, value] of Object.entries(req.headers)) {
+          if (Array.isArray(value)) {
+            // Multiple values for the same header
+            for (const v of value) {
+              httpRequest += `${key}: ${v}\r\n`;
+            }
+          } else {
+            httpRequest += `${key}: ${value}\r\n`;
+          }
+        }
+
+        httpRequest += '\r\n';
+
+        // Write the HTTP request
+        componentSocket.write(httpRequest);
+
+        // Write any buffered data from the upgrade
+        if (head && head.length > 0) {
           componentSocket.write(head);
         }
 
@@ -684,11 +696,13 @@ async function boot() {
         componentSocket.pipe(socket);
       });
 
-      // Handle errors
+      // Handle connection errors
       componentSocket.on('error', (err) => {
         console.error(`[ws] Component socket error:`, err.message);
-        socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
-        socket.destroy();
+        if (!socket.destroyed) {
+          socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+          socket.destroy();
+        }
       });
 
       socket.on('error', (err) => {
@@ -696,13 +710,20 @@ async function boot() {
         componentSocket.destroy();
       });
 
-      componentSocket.on('close', () => socket.destroy());
-      socket.on('close', () => componentSocket.destroy());
+      componentSocket.on('close', () => {
+        if (!socket.destroyed) socket.destroy();
+      });
+
+      socket.on('close', () => {
+        if (!componentSocket.destroyed) componentSocket.destroy();
+      });
 
     } catch (err) {
       console.error('[ws] Upgrade error:', err);
-      socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
-      socket.destroy();
+      if (!socket.destroyed) {
+        socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+        socket.destroy();
+      }
     }
   });
 }
