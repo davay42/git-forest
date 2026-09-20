@@ -343,17 +343,21 @@ function handleGit(req, res, ip) {
   git.on("close", (code) => { res.end(); });
 }
 
-function proxyToComponent(req, res, segment) {
+function proxyToComponent(req, res, segment, isSubdomain = false) {
   const component = components.get(segment);
   if (!component) { res.writeHead(502); return res.end("Component unavailable"); }
 
-  const prefixLength = segment.length + 1;
-  let strippedUrl = req.url.slice(prefixLength);
-  if (!strippedUrl.startsWith('/')) strippedUrl = '/' + strippedUrl;
+  let strippedUrl = req.url;
+  if (!isSubdomain) {
+    const prefixLength = segment.length + 1;
+    strippedUrl = req.url.slice(prefixLength);
+    if (!strippedUrl.startsWith('/')) strippedUrl = '/' + strippedUrl;
+  }
 
   const proxyReq = request({
     agent: proxyAgent, socketPath: component.socketPath, path: strippedUrl, method: req.method, headers: req.headers
   }, (proxyRes) => { res.writeHead(proxyRes.statusCode, proxyRes.headers); proxyRes.pipe(res); });
+
   proxyReq.on("error", () => { res.writeHead(502); res.end("Component unavailable"); });
   req.pipe(proxyReq);
 }
@@ -404,6 +408,16 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://localhost");
     let path = url.pathname;
     const ip = getClientIp(req);
+
+    const host = (req.headers.host || '').split(':')[0]; // Strip port (e.g., ":3000")
+    const parts = host.split('.');
+    const subdomain = parts[0];
+
+    // If it's not localhost, has multiple parts (meaning it's a subdomain), 
+    // and the subdomain matches a known component -> Route it!
+    if (host !== 'localhost' && host !== '127.0.0.1' && parts.length > 1 && components.has(subdomain)) {
+      return proxyToComponent(req, res, subdomain, true); // true = isSubdomain
+    }
 
     if (path === "/_forest/commit" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
