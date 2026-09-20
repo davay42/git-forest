@@ -635,6 +635,76 @@ async function boot() {
     console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
     console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
   });
+
+  // ─── WEBSOCKET UPGRADE HANDLER ────────────────────────────────────────────
+  server.on('upgrade', (req, socket, head) => {
+    try {
+      const url = new URL(req.url, "http://localhost");
+      const path = url.pathname;
+
+      // Extract the component name from the first path segment
+      const segment = path.split("/")[1];
+
+      if (!segment || !components.has(segment)) {
+        socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      const component = components.get(segment);
+
+      // Strip the component prefix from the path
+      const prefixLength = segment.length + 1;
+      let strippedPath = path.slice(prefixLength);
+      if (!strippedPath.startsWith('/')) strippedPath = '/' + strippedPath;
+      strippedPath += url.search;
+
+      console.log(`[ws] 🔌 Upgrading connection to /${segment}${strippedPath}`);
+
+      // Connect to the component's Unix socket
+      const net = require('node:net');
+      const componentSocket = net.connect(component.socketPath, () => {
+        // Forward the original upgrade request to the component
+        const headers = Object.entries(req.headers)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join('\r\n');
+
+        componentSocket.write(
+          `${req.method} ${strippedPath} HTTP/1.1\r\n` +
+          headers +
+          '\r\n\r\n'
+        );
+
+        if (head.length > 0) {
+          componentSocket.write(head);
+        }
+
+        // Pipe bidirectional traffic
+        socket.pipe(componentSocket);
+        componentSocket.pipe(socket);
+      });
+
+      // Handle errors
+      componentSocket.on('error', (err) => {
+        console.error(`[ws] Component socket error:`, err.message);
+        socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        socket.destroy();
+      });
+
+      socket.on('error', (err) => {
+        console.error(`[ws] Client socket error:`, err.message);
+        componentSocket.destroy();
+      });
+
+      componentSocket.on('close', () => socket.destroy());
+      socket.on('close', () => componentSocket.destroy());
+
+    } catch (err) {
+      console.error('[ws] Upgrade error:', err);
+      socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+      socket.destroy();
+    }
+  });
 }
 
 boot();
