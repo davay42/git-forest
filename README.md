@@ -91,7 +91,7 @@ git-forest is designed to run as a single stateful container with a persistent v
    ```
    PORT=3000
    GIT_SECRET=your_secure_random_string
-   GITHUB_BACKUP_URL=https://github.com/youruser/your-backup-repo.git  # optional
+   GIT_BACKUP_URL=https://github.com/youruser/your-backup-repo.git  # optional
    ```
 4. **Deploy.** On first boot, the container will seed `index.js` into the volume, initialize Git, and start the server.
 
@@ -301,9 +301,9 @@ EXPOSE 3000
 ENTRYPOINT ["sh", "-c", "\
     if [ ! -f 'index.js' ]; then \
         echo '[init] 🌱 Empty volume detected.'; \
-        if [ -n \"$GITHUB_BACKUP_URL\" ]; then \
+        if [ -n \"$GIT_BACKUP_URL\" ]; then \
             echo '[init] 🔄 Restoring from GitHub backup...'; \
-            git clone \"$GITHUB_BACKUP_URL\" . || { git init -b main; cp /opt/git-forest-seed/index.js .; }; \
+            git clone \"$GIT_BACKUP_URL\" . || { git init -b main; cp /opt/git-forest-seed/index.js .; }; \
         else \
             git init -b main; cp /opt/git-forest-seed/index.js .; \
         fi; \

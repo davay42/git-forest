@@ -16,7 +16,7 @@ const ROOT = process.cwd();
 const PUBLIC_DIR = join(ROOT, 'public');
 const GIT_SECRET = process.env.GIT_SECRET;
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
-const GITHUB_BACKUP_URL = process.env.GITHUB_BACKUP_URL;
+const GIT_BACKUP_URL = process.env.GIT_BACKUP_URL;
 
 const RELOAD_TOKEN = crypto.randomBytes(16).toString('hex');
 
@@ -346,13 +346,13 @@ function proxyToComponent(req, res, segment, isSubdomain = false) {
 
 // ─── BACKGROUND BACKUP SYNC ────────────────────────────────────────────
 async function syncToBackup() {
-  if (!GITHUB_BACKUP_URL) return;
+  if (!GIT_BACKUP_URL) return;
 
   try {
     try {
       await execFileAsync('git', ['remote', 'get-url', 'backup'], { cwd: ROOT });
     } catch {
-      await execFileAsync('git', ['remote', 'add', 'backup', GITHUB_BACKUP_URL], { cwd: ROOT });
+      await execFileAsync('git', ['remote', 'add', 'backup', GIT_BACKUP_URL], { cwd: ROOT });
     }
 
     let needsPush = true;
@@ -601,10 +601,10 @@ async function boot() {
   }
   if (!existsSync(join(ROOT, '.git'))) {
     console.log('[boot] 🌱 No Git repository found.');
-    if (GITHUB_BACKUP_URL) {
+    if (GIT_BACKUP_URL) {
       console.log('[boot] 🔄 Attempting to restore from GitHub backup...');
       try {
-        await execFileAsync('git', ['clone', GITHUB_BACKUP_URL, '.'], { cwd: ROOT });
+        await execFileAsync('git', ['clone', GIT_BACKUP_URL, '.'], { cwd: ROOT });
         console.log('[boot] ✅ Successfully restored from backup.');
       } catch (err) {
         console.error('[boot] ⚠️ Clone failed. Falling back to fresh init.', err.message);
@@ -625,7 +625,7 @@ async function boot() {
     }
   }
 
-  if (GITHUB_BACKUP_URL) {
+  if (GIT_BACKUP_URL) {
     console.log(`[backup] 🔄 GitHub backup enabled. Syncing every 5 minutes.`);
     setTimeout(syncToBackup, 10000);
     setInterval(syncToBackup, 5 * 60 * 1000);
