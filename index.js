@@ -367,9 +367,9 @@ async function syncToBackup() {
 
     if (!needsPush) return;
 
-    console.log(`[backup] 🔄 New commits detected. Pushing to GitHub...`);
+    console.log(`[backup] 🔄 New commits detected. Pushing to backup git...`);
     await execFileAsync('git', ['push', 'backup', 'main'], { cwd: ROOT });
-    console.log('[backup] ✅ Synced to GitHub');
+    console.log('[backup] ✅ Synced to backup');
 
   } catch (err) {
     console.error('[backup] ⚠️ Sync failed:', err.stderr || err.message);
@@ -602,7 +602,7 @@ async function boot() {
   if (!existsSync(join(ROOT, '.git'))) {
     console.log('[boot] 🌱 No Git repository found.');
     if (GIT_BACKUP_URL) {
-      console.log('[boot] 🔄 Attempting to restore from GitHub backup...');
+      console.log('[boot] 🔄 Attempting to restore from git backup...');
       try {
         await execFileAsync('git', ['clone', GIT_BACKUP_URL, '.'], { cwd: ROOT });
         console.log('[boot] ✅ Successfully restored from backup.');
@@ -626,7 +626,7 @@ async function boot() {
   }
 
   if (GIT_BACKUP_URL) {
-    console.log(`[backup] 🔄 GitHub backup enabled. Syncing every 5 minutes.`);
+    console.log(`[backup] 🔄 Git backup enabled. Syncing every 5 minutes.`);
     setTimeout(syncToBackup, 10000);
     setInterval(syncToBackup, 5 * 60 * 1000);
   }
