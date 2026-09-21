@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-
 import { createServer, request, Agent } from "node:http";
 import { spawn, execFile } from "node:child_process";
 import { readdir, readFile, unlink, stat, mkdir, writeFile } from "node:fs/promises";
@@ -9,42 +8,58 @@ import { promisify } from "node:util";
 import crypto from "node:crypto";
 import net from "node:net";
 
-const execFileAsync = promisify(execFile);
+const exec = promisify(execFile);
 
-const PORT = process.env.PORT || 3000;
+// ─── CONFIGURATION ─────────────────────────────────────────────────────────
+const PORT = parseInt(process.env.PORT) || 3000;
 const ROOT = process.cwd();
 const PUBLIC_DIR = join(ROOT, 'public');
 const GIT_SECRET = process.env.GIT_SECRET;
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const GIT_BACKUP_URL = process.env.GIT_BACKUP_URL;
-
 const RELOAD_TOKEN = crypto.randomBytes(16).toString('hex');
 
-function discoverGitHttpBackend() {
+const envInt = (key, fallback) => {
+  const val = parseInt(process.env[`FOREST_${key}`], 10);
+  return Number.isFinite(val) ? val : fallback;
+};
+
+const RATE_LIMIT_MAX = envInt('RATE_LIMIT_MAX', 5);
+const RATE_LIMIT_WINDOW_MS = envInt('RATE_LIMIT_WINDOW_MS', 60000);
+const RATE_LIMIT_CLEANUP_MS = envInt('RATE_LIMIT_CLEANUP_MS', 60000);
+const COMPONENT_READY_TIMEOUT_MS = envInt('COMPONENT_READY_TIMEOUT_MS', 2000);
+const COMPONENT_RESTART_DELAY_MS = envInt('COMPONENT_RESTART_DELAY_MS', 3000);
+const COMPONENT_CLEANUP_DELAY_MS = envInt('COMPONENT_CLEANUP_DELAY_MS', 5000);
+const PROXY_MAX_SOCKETS = envInt('PROXY_MAX_SOCKETS', 128);
+const COMMIT_BODY_LIMIT_BYTES = envInt('COMMIT_BODY_LIMIT_BYTES', 1048576);
+const BACKUP_INITIAL_DELAY_MS = envInt('BACKUP_INITIAL_DELAY_MS', 10000);
+const BACKUP_INTERVAL_MS = envInt('BACKUP_INTERVAL_MS', 300000);
+const SHUTDOWN_TIMEOUT_MS = envInt('SHUTDOWN_TIMEOUT_MS', 5000);
+
+// ─── GIT HTTP BACKEND DISCOVERY ────────────────────────────────────────────
+function discoverGitBackend() {
   if (process.env.GIT_HTTP_BACKEND) return process.env.GIT_HTTP_BACKEND;
-  const commonPaths = [
+  const paths = [
     '/usr/libexec/git-core/git-http-backend',
     '/usr/local/libexec/git-core/git-http-backend',
     '/opt/homebrew/libexec/git-core/git-http-backend',
     '/Library/Developer/CommandLineTools/usr/libexec/git-core/git-http-backend',
     '/usr/lib/git-core/git-http-backend',
   ];
-  for (const path of commonPaths) {
-    if (existsSync(path)) return path;
-  }
-  return '/usr/libexec/git-core/git-http-backend';
+  return paths.find(existsSync) || paths[0];
 }
 
-const GIT_HTTP_BACKEND = discoverGitHttpBackend();
+const GIT_HTTP_BACKEND = discoverGitBackend();
 
+// ─── STATE ──────────────────────────────────────────────────────────────────
 const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript", ".json": "application/json", ".md": "text/markdown", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon" };
-
-const proxyAgent = new Agent({ keepAlive: true, maxSockets: 128 });
+const proxyAgent = new Agent({ keepAlive: true, maxSockets: PROXY_MAX_SOCKETS });
 const components = new Map();
 const componentTokens = new Map();
 let isReloading = false;
 const startTime = Date.now();
 
+// ─── GIT COMMIT QUEUE (MUTEX) ──────────────────────────────────────────────
 let gitQueue = Promise.resolve();
 
 async function queueGitCommit(files, message) {
@@ -57,16 +72,17 @@ async function queueGitCommit(files, message) {
     await currentQueue.catch(() => { });
     const fileList = Array.isArray(files) ? files : [files];
     const addArgs = fileList.length > 0 ? ['add', ...fileList] : ['add', '.'];
-    await execFileAsync('git', addArgs, { cwd: ROOT });
 
-    const { stdout } = await execFileAsync('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
+    await exec('git', addArgs, { cwd: ROOT });
+    const { stdout } = await exec('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
+
     if (!stdout.trim()) {
       const result = { status: 'ok', message: 'No changes to commit' };
       resolveTask(result);
       return result;
     }
 
-    await execFileAsync('git', ['commit', '-m', message || 'chore: auto-commit'], { cwd: ROOT });
+    await exec('git', ['commit', '-m', message || 'chore: auto-commit'], { cwd: ROOT });
     const result = { status: 'ok', message: 'Committed successfully' };
     resolveTask(result);
     return result;
@@ -78,34 +94,35 @@ async function queueGitCommit(files, message) {
   }
 }
 
-function timingSafeEqualStr(a, b) {
+// ─── SECURITY UTILITIES ────────────────────────────────────────────────────
+function timingSafeEqual(a, b) {
   const bufA = Buffer.from(String(a)), bufB = Buffer.from(String(b));
   if (bufA.length !== bufB.length) return false;
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
 const authBuckets = new Map();
-function isRateLimited(ip) {
+setInterval(() => {
   const now = Date.now();
+  for (const [ip, entry] of authBuckets) {
+    if (now > entry.resetAt) authBuckets.delete(ip);
+  }
+}, RATE_LIMIT_CLEANUP_MS).unref();
+
+function isRateLimited(ip) {
   const entry = authBuckets.get(ip);
-  if (!entry || now > entry.resetAt) return false;
-  return entry.count >= 5;
+  return entry && Date.now() <= entry.resetAt && entry.count >= RATE_LIMIT_MAX;
 }
 
 function recordFailedAuth(ip) {
   const now = Date.now();
   const entry = authBuckets.get(ip);
   if (!entry || now > entry.resetAt) {
-    authBuckets.set(ip, { count: 1, resetAt: now + 60000 });
+    authBuckets.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
   } else {
     entry.count++;
   }
 }
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of authBuckets) if (now > entry.resetAt) authBuckets.delete(ip);
-}, 60000).unref();
 
 function getClientIp(req) {
   if (TRUST_PROXY) {
@@ -121,19 +138,20 @@ function addSecurityHeaders(res) {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 }
 
+// ─── COMPONENT LIFECYCLE ───────────────────────────────────────────────────
 async function swapComponent(name) {
   const oldComponent = components.get(name);
-  const newSocketPath = `/tmp/forest-${name}-${Date.now()}.sock`;
+  const socketPath = `/tmp/forest-${name}-${Date.now()}.sock`;
   const scriptPath = join(ROOT, name, "index.js");
-  await unlink(newSocketPath).catch(() => { });
-  console.log(`[sync] 🌱 Starting new /${name}...`);
+
+  await unlink(socketPath).catch(() => { });
+  console.log(`[sync] 🌱 Starting /${name}...`);
 
   const componentToken = crypto.randomBytes(16).toString('hex');
-
   const newProc = spawn("node", [scriptPath], {
     env: {
       ...process.env,
-      SOCKET_PATH: newSocketPath,
+      SOCKET_PATH: socketPath,
       COMPONENT_NAME: name,
       COMPONENT_DIR: join(ROOT, name),
       FOREST_COMPONENT_TOKEN: componentToken,
@@ -151,7 +169,7 @@ async function swapComponent(name) {
     const done = () => resolve();
     newProc.once('message', (msg) => { if (msg === 'ready') { ready = true; done(); } });
     newProc.once('exit', (code) => { exitedEarly = true; done(); });
-    setTimeout(done, 2000);
+    setTimeout(done, COMPONENT_READY_TIMEOUT_MS);
   });
 
   if (!ready) {
@@ -161,13 +179,13 @@ async function swapComponent(name) {
     return;
   }
 
-  components.set(name, { socketPath: newSocketPath, proc: newProc, token: componentToken, startTime: Date.now() });
+  components.set(name, { socketPath, proc: newProc, token: componentToken, startTime: Date.now() });
   console.log(`[sync] 🔄 Swapped router for /${name}`);
 
   if (oldComponent) {
     componentTokens.delete(oldComponent.token);
     oldComponent.proc.kill("SIGTERM");
-    setTimeout(() => unlink(oldComponent.socketPath).catch(() => { }), 5000);
+    setTimeout(() => unlink(oldComponent.socketPath).catch(() => { }), COMPONENT_CLEANUP_DELAY_MS);
   }
 
   newProc.on("exit", (code) => {
@@ -175,7 +193,7 @@ async function swapComponent(name) {
       console.log(`[error] /${name} crashed with code ${code}. Restarting in 3s...`);
       componentTokens.delete(componentToken);
       components.delete(name);
-      setTimeout(() => swapComponent(name), 3000);
+      setTimeout(() => swapComponent(name), COMPONENT_RESTART_DELAY_MS);
     }
   });
 }
@@ -185,7 +203,7 @@ function killComponent(name) {
   if (component) {
     componentTokens.delete(component.token);
     component.proc.kill("SIGTERM");
-    setTimeout(() => unlink(component.socketPath).catch(() => { }), 5000);
+    setTimeout(() => unlink(component.socketPath).catch(() => { }), COMPONENT_CLEANUP_DELAY_MS);
   }
 }
 
@@ -212,23 +230,30 @@ process.on("SIGHUP", async () => {
       }
     }
     console.log(`[sync] ✅ Reload complete. Active: ${[...components.keys()].join(", ") || "none"}`);
-  } catch (err) { console.error("[sync] Reload failed:", err); }
-  finally { isReloading = false; }
+  } catch (err) {
+    console.error("[sync] Reload failed:", err);
+  } finally {
+    isReloading = false;
+  }
 });
 
+// ─── STATIC FILE SERVER ────────────────────────────────────────────────────
 async function serveStatic(req, res) {
   const url = new URL(req.url, "http://localhost");
   const safePath = decodeURIComponent(url.pathname).replace(/^\/+/, '');
   const filePath = join(PUBLIC_DIR, safePath);
+
   if (!filePath.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
     return res.end("Forbidden");
   }
+
   const relPath = filePath.slice(PUBLIC_DIR.length);
   const blockedNames = ['.git', '.env', '.env.local', '.env.production', '.DS_Store'];
   const parts = relPath.split('/');
   if (parts.some(p => blockedNames.includes(p))) {
-    res.writeHead(403); return res.end("Forbidden");
+    res.writeHead(403);
+    return res.end("Forbidden");
   }
 
   try {
@@ -242,7 +267,6 @@ async function serveStatic(req, res) {
     res.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
     res.end(content);
   } catch {
-    // 🚀 NEW: Beautiful First-Run Fallback
     if (url.pathname === '/' || url.pathname === '/index.html') {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       return res.end(`<!DOCTYPE html><html><body style="font-family:system-ui;max-width:600px;margin:4rem auto;text-align:center;color:#1a1a1a;">
@@ -259,13 +283,16 @@ async function serveStatic(req, res) {
   }
 }
 
+// ─── GIT HTTP BACKEND ──────────────────────────────────────────────────────
 function checkGitAuth(req, res, ip) {
   if (!GIT_SECRET) return "git-user";
+
   if (isRateLimited(ip)) {
     res.writeHead(429, { "Content-Type": "text/plain" });
     res.end("Too many failed attempts. Try again later.");
     return null;
   }
+
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Basic ")) {
     recordFailedAuth(ip);
@@ -273,10 +300,12 @@ function checkGitAuth(req, res, ip) {
     res.end("Unauthorized");
     return null;
   }
+
   const base64 = auth.split(" ")[1];
   const credentials = Buffer.from(base64, "base64").toString("utf-8");
   const [user, password] = credentials.split(":");
-  if (!password || !timingSafeEqualStr(password, GIT_SECRET)) {
+
+  if (!password || !timingSafeEqual(password, GIT_SECRET)) {
     recordFailedAuth(ip);
     res.writeHead(403, { "Content-Type": "text/plain" });
     res.end("Forbidden");
@@ -288,6 +317,7 @@ function checkGitAuth(req, res, ip) {
 function handleGit(req, res, ip) {
   const remoteUser = checkGitAuth(req, res, ip);
   if (!remoteUser) return;
+
   const url = new URL(req.url, "http://localhost");
   const env = {
     ...process.env,
@@ -301,8 +331,14 @@ function handleGit(req, res, ip) {
     QUERY_STRING: url.search.slice(1),
     REMOTE_USER: remoteUser,
   };
+
   const git = spawn(GIT_HTTP_BACKEND, [], { env });
-  if (req.method === "POST" && req.headers["content-length"]) { req.pipe(git.stdin) } else { git.stdin.end(); }
+  if (req.method === "POST" && req.headers["content-length"]) {
+    req.pipe(git.stdin);
+  } else {
+    git.stdin.end();
+  }
+
   let buf = Buffer.alloc(0), parsed = false;
   git.stdout.on("data", (chunk) => {
     if (parsed) return res.write(chunk);
@@ -315,7 +351,10 @@ function handleGit(req, res, ip) {
       const headers = {};
       hdr.split("\r\n").forEach(l => {
         const i = l.indexOf(":");
-        if (i > 0) { const k = l.slice(0, i).trim(); if (k.toLowerCase() !== "status") headers[k] = l.slice(i + 1).trim(); }
+        if (i > 0) {
+          const k = l.slice(0, i).trim();
+          if (k.toLowerCase() !== "status") headers[k] = l.slice(i + 1).trim();
+        }
       });
       res.writeHead(parseInt(status), headers);
       res.write(buf.subarray(end + 4));
@@ -325,9 +364,13 @@ function handleGit(req, res, ip) {
   git.on("close", (code) => { res.end(); });
 }
 
+// ─── HTTP PROXY ────────────────────────────────────────────────────────────
 function proxyToComponent(req, res, segment, isSubdomain = false) {
   const component = components.get(segment);
-  if (!component) { res.writeHead(502); return res.end("Component unavailable"); }
+  if (!component) {
+    res.writeHead(502);
+    return res.end("Component unavailable");
+  }
 
   let strippedUrl = req.url;
   if (!isSubdomain) {
@@ -337,27 +380,37 @@ function proxyToComponent(req, res, segment, isSubdomain = false) {
   }
 
   const proxyReq = request({
-    agent: proxyAgent, socketPath: component.socketPath, path: strippedUrl, method: req.method, headers: req.headers
-  }, (proxyRes) => { res.writeHead(proxyRes.statusCode, proxyRes.headers); proxyRes.pipe(res); });
+    agent: proxyAgent,
+    socketPath: component.socketPath,
+    path: strippedUrl,
+    method: req.method,
+    headers: req.headers
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res);
+  });
 
-  proxyReq.on("error", () => { res.writeHead(502); res.end("Component unavailable"); });
+  proxyReq.on("error", () => {
+    res.writeHead(502);
+    res.end("Component unavailable");
+  });
   req.pipe(proxyReq);
 }
 
-// ─── BACKGROUND BACKUP SYNC ────────────────────────────────────────────
+// ─── BACKGROUND BACKUP SYNC ────────────────────────────────────────────────
 async function syncToBackup() {
   if (!GIT_BACKUP_URL) return;
 
   try {
     try {
-      await execFileAsync('git', ['remote', 'get-url', 'backup'], { cwd: ROOT });
+      await exec('git', ['remote', 'get-url', 'backup'], { cwd: ROOT });
     } catch {
-      await execFileAsync('git', ['remote', 'add', 'backup', GIT_BACKUP_URL], { cwd: ROOT });
+      await exec('git', ['remote', 'add', 'backup', GIT_BACKUP_URL], { cwd: ROOT });
     }
 
     let needsPush = true;
     try {
-      const { stdout: count } = await execFileAsync('git', ['rev-list', '--count', 'backup/main..main'], { cwd: ROOT });
+      const { stdout: count } = await exec('git', ['rev-list', '--count', 'backup/main..main'], { cwd: ROOT });
       if (parseInt(count.trim(), 10) === 0) {
         needsPush = false;
       }
@@ -367,29 +420,32 @@ async function syncToBackup() {
 
     if (!needsPush) return;
 
-    console.log(`[backup] 🔄 New commits detected. Pushing to backup git...`);
-    await execFileAsync('git', ['push', 'backup', 'main'], { cwd: ROOT });
+    console.log(`[backup] 🔄 New commits detected. Pushing to backup...`);
+    await exec('git', ['push', 'backup', 'main'], { cwd: ROOT });
     console.log('[backup] ✅ Synced to backup');
-
   } catch (err) {
     console.error('[backup] ⚠️ Sync failed:', err.stderr || err.message);
   }
 }
+
+// ─── HTTP SERVER ────────────────────────────────────────────────────────────
 const server = createServer(async (req, res) => {
   try {
     addSecurityHeaders(res);
     const url = new URL(req.url, "http://localhost");
-    let path = url.pathname;
+    const path = url.pathname;
     const ip = getClientIp(req);
 
+    // Subdomain routing
     const host = (req.headers.host || '').split(':')[0];
     const parts = host.split('.');
     const subdomain = parts[0];
 
     if (host !== 'localhost' && host !== '127.0.0.1' && parts.length > 1 && components.has(subdomain)) {
-      return proxyToComponent(req, res, subdomain, true); // true = isSubdomain
+      return proxyToComponent(req, res, subdomain, true);
     }
 
+    // Internal API: Commit endpoint
     if (path === "/_forest/commit" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
       const componentName = componentTokens.get(token);
@@ -402,7 +458,7 @@ const server = createServer(async (req, res) => {
       let body = "";
       req.on("data", chunk => {
         body += chunk;
-        if (body.length > 1e6) req.destroy();
+        if (body.length > COMMIT_BODY_LIMIT_BYTES) req.destroy();
       });
       req.on("end", async () => {
         try {
@@ -432,16 +488,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Internal API: Health check
     if (path === "/_forest/health" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/plain" });
       return res.end("OK");
     }
 
-
+    // Internal API: Reload endpoint
     if (path === "/_forest/reload" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
-
-      const isValid = (token === RELOAD_TOKEN) || (GIT_SECRET && timingSafeEqualStr(token, GIT_SECRET));
+      const isValid = (token === RELOAD_TOKEN) || (GIT_SECRET && timingSafeEqual(token, GIT_SECRET));
 
       if (!isValid) {
         res.writeHead(403, { "Content-Type": "text/plain" });
@@ -454,6 +510,7 @@ const server = createServer(async (req, res) => {
       return res.end("Reload triggered");
     }
 
+    // Internal API: Status endpoint
     if (path === "/_forest/status" && req.method === "GET") {
       const token = req.headers['x-forest-token'];
       const componentName = componentTokens.get(token);
@@ -493,8 +550,10 @@ const server = createServer(async (req, res) => {
       return res.end(JSON.stringify(status, null, 2));
     }
 
+    // Git HTTP backend
     if (path.startsWith("/git")) return handleGit(req, res, ip);
 
+    // Component routing
     const segment = path.split("/")[1];
     if (segment && components.has(segment)) {
       if (path === `/${segment}`) {
@@ -504,8 +563,8 @@ const server = createServer(async (req, res) => {
       return proxyToComponent(req, res, segment);
     }
 
+    // Static files
     await serveStatic(req, res);
-
   } catch (err) {
     console.error("[core] Unhandled error:", err);
     if (!res.headersSent) res.writeHead(500, { "Content-Type": "text/plain" });
@@ -513,18 +572,22 @@ const server = createServer(async (req, res) => {
   }
 });
 
+// ─── GRACEFUL SHUTDOWN ──────────────────────────────────────────────────────
 process.on('SIGTERM', () => {
   console.log('[core] ⏹️ Received SIGTERM. Closing HTTP server gracefully...');
-  server.close(() => { console.log('[core] ✅ Active connections finished. Exiting.'); process.exit(0); });
-  setTimeout(() => process.exit(1), 5000).unref();
+  server.close(() => {
+    console.log('[core] ✅ Active connections finished. Exiting.');
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
 });
 
+// ─── GIT HOOK MANAGEMENT ───────────────────────────────────────────────────
 async function ensureGitHook() {
   const hooksDir = join(ROOT, '.git', 'hooks');
   if (!existsSync(hooksDir)) await mkdir(hooksDir, { recursive: true });
 
   const hookPath = join(hooksDir, 'post-receive');
-
   const hookContent = `#!/bin/sh
 # Forest Git Hook - Dynamically generated by index.js
 while read oldrev newrev refname; do
@@ -554,17 +617,19 @@ done
   await writeFile(hookPath, hookContent, { mode: 0o755 });
 }
 
+// ─── GIT INITIALIZATION ────────────────────────────────────────────────────
 async function freshInit() {
   console.log('[boot] 🌱 Initializing fresh Git repository...');
   try {
-    await execFileAsync('git', ['init', '-b', 'main'], { cwd: ROOT });
-    await execFileAsync('git', ['config', 'user.email', 'forest@local'], { cwd: ROOT });
-    await execFileAsync('git', ['config', 'user.name', 'Forest Server'], { cwd: ROOT });
-    await execFileAsync('git', ['config', 'receive.denyCurrentBranch', 'updateInstead'], { cwd: ROOT });
-    await execFileAsync('git', ['add', '.'], { cwd: ROOT });
-    const { stdout: staged } = await execFileAsync('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
+    await exec('git', ['init', '-b', 'main'], { cwd: ROOT });
+    await exec('git', ['config', 'user.email', 'forest@local'], { cwd: ROOT });
+    await exec('git', ['config', 'user.name', 'Forest Server'], { cwd: ROOT });
+    await exec('git', ['config', 'receive.denyCurrentBranch', 'updateInstead'], { cwd: ROOT });
+    await exec('git', ['add', '.'], { cwd: ROOT });
+
+    const { stdout: staged } = await exec('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
     if (staged.trim()) {
-      await execFileAsync('git', ['commit', '-m', 'chore: initial forest seed'], { cwd: ROOT });
+      await exec('git', ['commit', '-m', 'chore: initial forest seed'], { cwd: ROOT });
       console.log('[boot] ✅ Initial files committed to Git.');
     }
     console.log('[boot] ✅ Git repository initialized and configured.');
@@ -573,16 +638,18 @@ async function freshInit() {
   }
 }
 
+// ─── SELF-HEALING ───────────────────────────────────────────────────────────
 async function healGitState() {
   try {
-    const { stdout: status } = await execFileAsync('git', ['status', '--porcelain'], { cwd: ROOT });
+    const { stdout: status } = await exec('git', ['status', '--porcelain'], { cwd: ROOT });
 
     if (status.trim()) {
       console.log('[boot] 🩹 Dirty Git state detected. Healing...');
-      await execFileAsync('git', ['add', '-u'], { cwd: ROOT });
-      const { stdout: staged } = await execFileAsync('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
+      await exec('git', ['add', '-u'], { cwd: ROOT });
+
+      const { stdout: staged } = await exec('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
       if (staged.trim()) {
-        await execFileAsync('git', ['commit', '-m', 'chore: auto-heal tracked files after boot'], { cwd: ROOT });
+        await exec('git', ['commit', '-m', 'chore: auto-heal tracked files after boot'], { cwd: ROOT });
         console.log('[boot] ✅ Tracked files healed and committed.');
       } else {
         console.log('[boot] ℹ️ Dirty state consists only of untracked files (likely component data). Left uncommitted to protect Git history.');
@@ -593,73 +660,24 @@ async function healGitState() {
   }
 }
 
-async function boot() {
-  await healGitState();
-  const lockFiles = ['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'];
-  for (const lock of lockFiles) {
-    await unlink(join(ROOT, lock)).catch(() => { });
-  }
-  if (!existsSync(join(ROOT, '.git'))) {
-    console.log('[boot] 🌱 No Git repository found.');
-    if (GIT_BACKUP_URL) {
-      console.log('[boot] 🔄 Attempting to restore from git backup...');
-      try {
-        await execFileAsync('git', ['clone', GIT_BACKUP_URL, '.'], { cwd: ROOT });
-        console.log('[boot] ✅ Successfully restored from backup.');
-      } catch (err) {
-        console.error('[boot] ⚠️ Clone failed. Falling back to fresh init.', err.message);
-        await freshInit();
-      }
-    } else {
-      await freshInit();
-    }
-  }
-
-  await ensureGitHook();
-  console.log('[boot] 🪝 Git post-receive hook synced with current reload token.');
-
-  const entries = await readdir(ROOT, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
-      if (existsSync(join(ROOT, entry.name, "index.js"))) await swapComponent(entry.name);
-    }
-  }
-
-  if (GIT_BACKUP_URL) {
-    console.log(`[backup] 🔄 Git backup enabled. Syncing every 5 minutes.`);
-    setTimeout(syncToBackup, 10000);
-    setInterval(syncToBackup, 5 * 60 * 1000);
-  }
-
-  server.listen(PORT, () => {
-    console.log(`[ready] http://localhost:${PORT} | components: ${[...components.keys()].join(", ") || "none"}`);
-    console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
-    console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
-  });
-
-  // ─── WEBSOCKET UPGRADE HANDLER (DEBUG VERSION) ───────────────────────────
+// ─── WEBSOCKET UPGRADE HANDLER ──────────────────────────────────────────────
+function setupWebSocketUpgrade() {
   server.on('upgrade', (req, socket, head) => {
     try {
       const url = new URL(req.url, "http://localhost");
       const path = url.pathname;
-
       const segment = path.split("/")[1];
 
       if (!segment || !components.has(segment)) {
-        console.log(`[ws] ❌ Component not found: ${segment}`);
         socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
         socket.destroy();
         return;
       }
 
       const component = components.get(segment);
-      console.log(`[ws] 🔌 Upgrading to /${segment} via ${component.socketPath}`);
-
       const componentSocket = net.connect(component.socketPath);
 
       componentSocket.on('connect', () => {
-        console.log(`[ws] ✅ Connected to component socket`);
-
         const strippedPath = path.slice(segment.length + 1) || '/';
         const fullPath = strippedPath + url.search;
 
@@ -681,7 +699,7 @@ async function boot() {
       });
 
       componentSocket.on('error', (err) => {
-        console.error(`[ws] ❌ Component socket error:`, err.code, err.message);
+        console.error(`[ws] Component socket error:`, err.code, err.message);
         if (!socket.destroyed) {
           socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
           socket.destroy();
@@ -689,28 +707,75 @@ async function boot() {
       });
 
       socket.on('error', (err) => {
-        console.error(`[ws] ❌ Client socket error:`, err.code, err.message);
+        console.error(`[ws] Client socket error:`, err.code, err.message);
         componentSocket.destroy();
       });
 
       componentSocket.on('close', () => {
-        console.log(`[ws] 🔌 Component socket closed`);
         if (!socket.destroyed) socket.destroy();
       });
 
       socket.on('close', () => {
-        console.log(`[ws] 🔌 Client socket closed`);
         if (!componentSocket.destroyed) componentSocket.destroy();
       });
-
     } catch (err) {
-      console.error('[ws] ❌ Upgrade handler exception:', err);
+      console.error('[ws] Upgrade handler exception:', err);
       if (!socket.destroyed) {
         socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
         socket.destroy();
       }
     }
   });
+}
+
+// ─── BOOT SEQUENCE ──────────────────────────────────────────────────────────
+async function boot() {
+  await healGitState();
+
+  const lockFiles = ['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'];
+  for (const lock of lockFiles) {
+    await unlink(join(ROOT, lock)).catch(() => { });
+  }
+
+  if (!existsSync(join(ROOT, '.git'))) {
+    console.log('[boot] 🌱 No Git repository found.');
+    if (GIT_BACKUP_URL) {
+      console.log('[boot] 🔄 Attempting to restore from git backup...');
+      try {
+        await exec('git', ['clone', GIT_BACKUP_URL, '.'], { cwd: ROOT });
+        console.log('[boot] ✅ Successfully restored from backup.');
+      } catch (err) {
+        console.error('[boot] ⚠️ Clone failed. Falling back to fresh init.', err.message);
+        await freshInit();
+      }
+    } else {
+      await freshInit();
+    }
+  }
+
+  await ensureGitHook();
+  console.log('[boot] 🪝 Git post-receive hook synced with current reload token.');
+
+  const entries = await readdir(ROOT, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
+      if (existsSync(join(ROOT, entry.name, "index.js"))) await swapComponent(entry.name);
+    }
+  }
+
+  if (GIT_BACKUP_URL) {
+    console.log(`[backup] 🔄 Git backup enabled. Syncing every ${BACKUP_INTERVAL_MS / 60000} minutes.`);
+    setTimeout(syncToBackup, BACKUP_INITIAL_DELAY_MS);
+    setInterval(syncToBackup, BACKUP_INTERVAL_MS);
+  }
+
+  server.listen(PORT, () => {
+    console.log(`[ready] http://localhost:${PORT} | components: ${[...components.keys()].join(", ") || "none"}`);
+    console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
+    console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
+  });
+
+  setupWebSocketUpgrade();
 }
 
 boot();
