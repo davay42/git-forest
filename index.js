@@ -118,6 +118,7 @@ function recordFailedAuth(ip) {
   const now = Date.now();
   const entry = authBuckets.get(ip);
   if (!entry || now > entry.resetAt) {
+    if (authBuckets.size > 10000) authBuckets.clear(); // Prevent unbounded growth
     authBuckets.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
   } else {
     entry.count++;
@@ -421,7 +422,7 @@ async function syncToBackup() {
     if (!needsPush) return;
 
     console.log(`[backup] 🔄 New commits detected. Pushing to backup...`);
-    await exec('git', ['push', 'backup', 'main'], { cwd: ROOT });
+    await exec('git', ['push', '--set-upstream', 'backup', 'main'], { cwd: ROOT });
     console.log('[backup] ✅ Synced to backup');
   } catch (err) {
     console.error('[backup] ⚠️ Sync failed:', err.stderr || err.message);
@@ -573,14 +574,17 @@ const server = createServer(async (req, res) => {
 });
 
 // ─── GRACEFUL SHUTDOWN ──────────────────────────────────────────────────────
-process.on('SIGTERM', () => {
-  console.log('[core] ⏹️ Received SIGTERM. Closing HTTP server gracefully...');
+function gracefulShutdown(signal) {
+  console.log(`[core] ⏹️ Received ${signal}. Closing HTTP server gracefully...`);
   server.close(() => {
     console.log('[core] ✅ Active connections finished. Exiting.');
     process.exit(0);
   });
   setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
-});
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // ─── GIT HOOK MANAGEMENT ───────────────────────────────────────────────────
 async function ensureGitHook() {
