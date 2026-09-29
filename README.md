@@ -2,6 +2,8 @@
 
 > A zero-dependency Node.js runtime where the filesystem is the router, directories are isolated components, and Git is the deployment mechanism.
 
+[![NPM](https://img.shields.io/npm/v/@davay/git-forest)](https://www.npmjs.com/package/@davay/git-forest)
+
 ## The Epistemological Inversion
 
 Modern software engineering suffers from the "Database Illusion" and "Platform Dependency." We rent infrastructure, configure abstractions, and deploy through pipelines we do not own. 
