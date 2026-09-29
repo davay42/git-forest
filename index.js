@@ -35,6 +35,10 @@ const COMMIT_BODY_LIMIT_BYTES = envInt('COMMIT_BODY_LIMIT_BYTES', 1048576);
 const BACKUP_INITIAL_DELAY_MS = envInt('BACKUP_INITIAL_DELAY_MS', 10000);
 const BACKUP_INTERVAL_MS = envInt('BACKUP_INTERVAL_MS', 300000);
 const SHUTDOWN_TIMEOUT_MS = envInt('SHUTDOWN_TIMEOUT_MS', 5000);
+const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
+const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'forest_session';
+const MAX_AGE_DAYS = envInt('AUTH_MAX_AGE_DAYS', 90);
+const RENEWAL_WINDOW_DAYS = envInt('AUTH_RENEWAL_WINDOW_MS', 30);
 
 // ─── GIT HTTP BACKEND DISCOVERY ────────────────────────────────────────────
 function discoverGitBackend() {
@@ -140,11 +144,6 @@ function addSecurityHeaders(res) {
 }
 
 // ─── IDENTITY KERNEL (FIP) ──────────────────────────────────────────────────
-const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
-const COOKIE_NAME = 'forest_session';
-const MAX_AGE_DAYS = 90;
-const RENEWAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // Renew if older than 30 days
-
 function signDevice(deviceId, issuedAt) {
   return crypto.createHmac('sha256', AUTH_SECRET)
     .update(`${deviceId}.${issuedAt}`)
@@ -170,7 +169,7 @@ function processIdentity(req, res) {
       if (timingSafeEqual(sigBuffer, expectedSigBuffer)) {
         deviceId = dId;
         issuedAt = parseInt(iAt, 10);
-        if (Date.now() - issuedAt > RENEWAL_WINDOW_MS) {
+        if (Date.now() - issuedAt > RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000) {
           needsRenewal = true;
         }
       }
