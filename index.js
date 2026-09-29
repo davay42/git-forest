@@ -139,6 +139,63 @@ function addSecurityHeaders(res) {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 }
 
+// ─── IDENTITY KERNEL (FIP) ──────────────────────────────────────────────────
+const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
+const COOKIE_NAME = 'forest_session';
+const MAX_AGE_DAYS = 90;
+const RENEWAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // Renew if older than 30 days
+
+function signDevice(deviceId, issuedAt) {
+  return crypto.createHmac('sha256', AUTH_SECRET)
+    .update(`${deviceId}.${issuedAt}`)
+    .digest('hex');
+}
+
+function processIdentity(req, res) {
+  const cookieMatch = req.headers.cookie?.match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
+  const token = cookieMatch ? cookieMatch[1] : null;
+
+  let deviceId = null;
+  let issuedAt = Date.now();
+  let needsRenewal = false;
+
+  if (token) {
+    const parts = token.split('.');
+    if (parts.length === 3) {
+      const [dId, iAt, sig] = parts;
+      const expectedSig = signDevice(dId, iAt);
+      const sigBuffer = Buffer.from(sig, 'utf8');
+      const expectedSigBuffer = Buffer.from(expectedSig, 'utf8');
+
+      if (timingSafeEqual(sigBuffer, expectedSigBuffer)) {
+        deviceId = dId;
+        issuedAt = parseInt(iAt, 10);
+        if (Date.now() - issuedAt > RENEWAL_WINDOW_MS) {
+          needsRenewal = true;
+        }
+      }
+    }
+  }
+
+  if (!deviceId) {
+    deviceId = crypto.randomBytes(16).toString('hex');
+    issuedAt = Date.now();
+    needsRenewal = true;
+  }
+
+  if (needsRenewal) {
+    const newToken = `${deviceId}.${issuedAt}.${signDevice(deviceId, issuedAt)}`;
+    const isSecure = req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https';
+    const maxAgeSeconds = MAX_AGE_DAYS * 24 * 60 * 60;
+
+    res.setHeader('Set-Cookie',
+      `${COOKIE_NAME}=${newToken}; HttpOnly; ${isSecure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${maxAgeSeconds}`
+    );
+  }
+
+  req.forestDeviceId = deviceId;
+}
+
 // ─── COMPONENT LIFECYCLE ───────────────────────────────────────────────────
 async function swapComponent(name) {
   const oldComponent = components.get(name);
@@ -385,7 +442,7 @@ function proxyToComponent(req, res, segment, isSubdomain = false) {
     socketPath: component.socketPath,
     path: strippedUrl,
     method: req.method,
-    headers: req.headers
+    headers: { ...req.headers, 'x-forest-device-id': req.forestDeviceId }
   }, (proxyRes) => {
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
     proxyRes.pipe(res);
@@ -433,11 +490,11 @@ async function syncToBackup() {
 const server = createServer(async (req, res) => {
   try {
     addSecurityHeaders(res);
+    processIdentity(req, res);
     const url = new URL(req.url, "http://localhost");
     const path = url.pathname;
     const ip = getClientIp(req);
 
-    // Subdomain routing
     const host = (req.headers.host || '').split(':')[0];
     const parts = host.split('.');
     const subdomain = parts[0];
@@ -446,7 +503,6 @@ const server = createServer(async (req, res) => {
       return proxyToComponent(req, res, subdomain, true);
     }
 
-    // Internal API: Commit endpoint
     if (path === "/_forest/commit" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
       const componentName = componentTokens.get(token);
@@ -693,6 +749,7 @@ function setupWebSocketUpgrade() {
             httpRequest += `${key}: ${value}\r\n`;
           }
         }
+        httpRequest += `x-forest-device-id: ${req.forestDeviceId}\r\n`;
         httpRequest += '\r\n';
 
         componentSocket.write(httpRequest);
