@@ -116,6 +116,19 @@ async function commitKnowledge(files, message) {
 }
 ```
 
+### 4. The Identity (Forest Identity Protocol)
+Modern identity is a centralized ledger of PII. `git-forest` treats identity as a **cryptographic proof of device continuity**. The Core issues an `HttpOnly` cookie (`forest_session`) containing a signed `deviceId`. On every request, the Core verifies the HMAC signature and injects the verified ID into the `x-forest-device-id` header before proxying.
+
+*   **Zero Core State:** The Core stores no user tables, no sessions, no databases. Identity is pure math.
+*   **Sliding Expiration:** The browser enforces the 90-day hard limit via `Max-Age`. The Core silently renews the signature if the device visits within the 30-day window.
+*   **Semantic Edge:** The Core only guarantees the device hasn't been forged. Components read the raw `deviceId` and map it to semantic entities (`Student`, `Customer`) in their own local MD-LD graphs using polarity (`+`/`-`).
+
+```javascript
+// Inside a component
+const deviceId = req.headers['x-forest-device-id'];
+// Map deviceId to a student in shop/students.md
+```
+
 ## The Sovereign Ecosystem
 
 Because the entire platform specification fits in roughly 4,000 tokens, modern LLM agents can read this README and one-shot fully functional, 500-line community microservices in seconds. The cost of building highly specific, local software has dropped to zero.
@@ -132,6 +145,7 @@ Because the entire platform specification fits in roughly 4,000 tokens, modern L
 3.  **Timing-Safe Auth:** `GIT_SECRET` is validated using `crypto.timingSafeEqual`.
 4.  **Hardened Swaps:** Syntax errors in pushed code trigger a fallback to the previous working version.
 5.  **Self-Healing State:** On boot, the Core auto-commits tracked file modifications to restore push-to-deploy capability, while ignoring untracked Soil to protect Git history.
+6.  **Stateless Identity (FIP):** Device identity is verified via HMAC-SHA256 at the edge. No session stores, no JWT bloat, no centralized user databases.
 
 ---
 
