@@ -4,6 +4,10 @@
   "description": "A zero-dependency Node.js runtime where the filesystem is the router, directories are isolated components, and Git is the deployment mechanism.",
   "type": "module",
   "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/davay42/git-forest.git"
+  },
   "bin": {
     "git-forest": "./index.js"
   },
