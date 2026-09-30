@@ -436,12 +436,15 @@ function proxyToComponent(req, res, segment, isSubdomain = false) {
     if (!strippedUrl.startsWith('/')) strippedUrl = '/' + strippedUrl;
   }
 
+  const headers = { ...req.headers };
+  if (req.forestDeviceId) headers['x-forest-device-id'] = req.forestDeviceId;
+
   const proxyReq = request({
     agent: proxyAgent,
     socketPath: component.socketPath,
     path: strippedUrl,
     method: req.method,
-    headers: { ...req.headers, 'x-forest-device-id': req.forestDeviceId }
+    headers
   }, (proxyRes) => {
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
     proxyRes.pipe(res);
@@ -489,7 +492,17 @@ async function syncToBackup() {
 const server = createServer(async (req, res) => {
   try {
     addSecurityHeaders(res);
-    processIdentity(req, res);
+
+    const internalToken = req.headers['x-forest-token'];
+    const isInternalCall = internalToken && componentTokens.has(internalToken);
+
+    if (!isInternalCall) {
+      delete req.headers['x-forest-device-id'];
+      delete req.headers['x-forest-token'];
+      processIdentity(req, res);
+      if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
+    }
+
     const url = new URL(req.url, "http://localhost");
     const path = url.pathname;
     const ip = getClientIp(req);
@@ -723,6 +736,16 @@ async function healGitState() {
 function setupWebSocketUpgrade() {
   server.on('upgrade', (req, socket, head) => {
     try {
+      const internalToken = req.headers['x-forest-token'];
+      const isInternalCall = internalToken && componentTokens.has(internalToken);
+
+      if (!isInternalCall) {
+        delete req.headers['x-forest-device-id'];
+        delete req.headers['x-forest-token'];
+        processIdentity(req, null);
+        if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
+      }
+
       const url = new URL(req.url, "http://localhost");
       const path = url.pathname;
       const segment = path.split("/")[1];
@@ -748,7 +771,7 @@ function setupWebSocketUpgrade() {
             httpRequest += `${key}: ${value}\r\n`;
           }
         }
-        httpRequest += `x-forest-device-id: ${req.forestDeviceId}\r\n`;
+        if (req.forestDeviceId) httpRequest += `x-forest-device-id: ${req.forestDeviceId}\r\n`;
         httpRequest += '\r\n';
 
         componentSocket.write(httpRequest);

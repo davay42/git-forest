@@ -131,6 +131,40 @@ const deviceId = req.headers['x-forest-device-id'];
 // Map deviceId to a student in shop/students.md
 ```
 
+### 5. The Gateway (Internal/External Routing)
+The Core distinguishes between trusted internal calls and untrusted external traffic using a gateway pattern.
+
+**Internal Calls** (component-to-component):
+- Authenticated via `x-forest-token` header (matches `FOREST_COMPONENT_TOKEN`)
+- Verified against the Core's `componentTokens` registry
+- Bypass identity processing entirely
+- Headers pass through unchanged
+- Used for component `/commit` API calls and other internal communication
+
+**External Calls** (browser users):
+- `x-forest-token` and `x-forest-device-id` headers are stripped (anti-spoofing)
+- Identity is resolved from `forest_session` cookie via HMAC-SHA256
+- Verified `deviceId` is injected into `x-forest-device-id` header
+- Same process for HTTP requests and WebSocket upgrades
+
+```javascript
+// Internal call from component to Core
+const res = await fetch(`http://localhost:${process.env.FOREST_CORE_PORT}/_forest/commit`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'x-forest-token': process.env.FOREST_COMPONENT_TOKEN  // Trusted
+  },
+  body: JSON.stringify({ files, message })
+});
+
+// External call from browser (no token needed)
+// Core automatically processes identity from cookie
+// x-forest-device-id is injected after verification
+```
+
+This separation prevents header spoofing attacks and ensures that only registered components can bypass identity checks.
+
 ## The Sovereign Ecosystem
 
 Because the entire platform specification fits in roughly 4,000 tokens, modern LLM agents can read this README and one-shot fully functional, 500-line community microservices in seconds. The cost of building highly specific, local software has dropped to zero.
@@ -142,12 +176,13 @@ Because the entire platform specification fits in roughly 4,000 tokens, modern L
 
 ## Security & Edge Cases
 
-1.  **Commit Sandboxing:** Per-component tokens ensure a compromised component cannot overwrite another's files.
-2.  **Strict Static Boundary:** The `public/` directory is physically isolated. Path traversal is mathematically blocked.
-3.  **Timing-Safe Auth:** `GIT_SECRET` is validated using `crypto.timingSafeEqual`.
-4.  **Hardened Swaps:** Syntax errors in pushed code trigger a fallback to the previous working version.
-5.  **Self-Healing State:** On boot, the Core auto-commits tracked file modifications to restore push-to-deploy capability, while ignoring untracked Soil to protect Git history.
-6.  **Stateless Identity (FIP):** Device identity is verified via HMAC-SHA256 at the edge. No session stores, no JWT bloat, no centralized user databases.
+1.  **Gateway Routing:** Internal component calls are authenticated via `x-forest-token` and bypass identity processing. External calls strip spoofed headers and require verified identity via HMAC-signed cookies.
+2.  **Commit Sandboxing:** Per-component tokens ensure a compromised component cannot overwrite another's files.
+3.  **Strict Static Boundary:** The `public/` directory is physically isolated. Path traversal is mathematically blocked.
+4.  **Timing-Safe Auth:** `GIT_SECRET` is validated using `crypto.timingSafeEqual`.
+5.  **Hardened Swaps:** Syntax errors in pushed code trigger a fallback to the previous working version.
+6.  **Self-Healing State:** On boot, the Core auto-commits tracked file modifications to restore push-to-deploy capability, while ignoring untracked Soil to protect Git history.
+7.  **Stateless Identity (FIP):** Device identity is verified via HMAC-SHA256 at the edge. No session stores, no JWT bloat, no centralized user databases.
 
 ---
 
