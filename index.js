@@ -264,36 +264,6 @@ function killComponent(name) {
   }
 }
 
-process.on("SIGHUP", async () => {
-  if (isReloading) return;
-  isReloading = true;
-  console.log("[sync] 🔄 Received reload signal. Performing zero-downtime swap...");
-  try {
-    const entries = await readdir(ROOT, { withFileTypes: true });
-    const newFolders = new Set();
-    for (const entry of entries) {
-      if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
-        if (existsSync(join(ROOT, entry.name, "index.js"))) {
-          newFolders.add(entry.name);
-          await swapComponent(entry.name);
-        }
-      }
-    }
-    for (const name of components.keys()) {
-      if (!newFolders.has(name)) {
-        console.log(`[sync] 🗑️ Removing deleted /${name}`);
-        killComponent(name);
-        components.delete(name);
-      }
-    }
-    console.log(`[sync] ✅ Reload complete. Active: ${[...components.keys()].join(", ") || "none"}`);
-  } catch (err) {
-    console.error("[sync] Reload failed:", err);
-  } finally {
-    isReloading = false;
-  }
-});
-
 // ─── STATIC FILE SERVER ────────────────────────────────────────────────────
 async function serveStatic(req, res) {
   const url = new URL(req.url, "http://localhost");
