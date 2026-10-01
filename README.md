@@ -50,7 +50,7 @@ git push forest main
 ```
 
 The `post-receive` hook inspects the diff:
-*   **Component update:** Triggers a zero-downtime hot-swap of the worker process.
+*   **Component update:** Triggers a targeted, zero-downtime hot-swap of the specific worker process.
 *   **Core update (`index.js`):** Triggers a graceful container restart.
 
 ### Docker / Coolify
@@ -132,36 +132,17 @@ const deviceId = req.headers['x-forest-device-id'];
 ```
 
 ### 5. The Gateway (Internal/External Routing)
-The Core distinguishes between trusted internal calls and untrusted external traffic using a gateway pattern.
+The Core distinguishes between trusted internal calls and untrusted external traffic using a strict gateway pattern.
 
-**Internal Calls** (component-to-component):
-- Authenticated via `x-forest-token` header (matches `FOREST_COMPONENT_TOKEN`)
-- Verified against the Core's `componentTokens` registry
-- Bypass identity processing entirely
-- Headers pass through unchanged
-- Used for component `/commit` API calls and other internal communication
+**Internal Calls** (component-to-core):
+- Authenticated via `x-forest-token` header (matches `FOREST_COMPONENT_TOKEN` or `RELOAD_TOKEN`).
+- Verified against the Core's registry.
+- Bypass identity processing entirely; headers pass through unchanged.
 
 **External Calls** (browser users):
-- `x-forest-token` and `x-forest-device-id` headers are stripped (anti-spoofing)
-- Identity is resolved from `forest_session` cookie via HMAC-SHA256
-- Verified `deviceId` is injected into `x-forest-device-id` header
-- Same process for HTTP requests and WebSocket upgrades
-
-```javascript
-// Internal call from component to Core
-const res = await fetch(`http://localhost:${process.env.FOREST_CORE_PORT}/_forest/commit`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'x-forest-token': process.env.FOREST_COMPONENT_TOKEN  // Trusted
-  },
-  body: JSON.stringify({ files, message })
-});
-
-// External call from browser (no token needed)
-// Core automatically processes identity from cookie
-// x-forest-device-id is injected after verification
-```
+- `x-forest-token` and `x-forest-device-id` headers are aggressively stripped (anti-spoofing).
+- Identity is resolved from the `forest_session` cookie via HMAC-SHA256.
+- Verified `deviceId` is injected into the `x-forest-device-id` header.
 
 This separation prevents header spoofing attacks and ensures that only registered components can bypass identity checks.
 
@@ -171,15 +152,15 @@ Because the entire platform specification fits in roughly 4,000 tokens, modern L
 
 *   **Sovereign Workflows:** Unlimited automation flows, replacing n8n or Make.com.
 *   **AI Agent Substrate:** Agents live as components, reading the filesystem, reasoning over semantic data, and committing knowledge to Git.
-*   **The Transparent Tunnel:** A 250-LOC WebSocket proxy component that exposes your local forest to the public internet without third-party services like ngrok.
+*   **The Transparent Tunnel:** A lightweight WebSocket proxy component that exposes your local forest to the public internet without third-party services like ngrok.
 *   **The Personal Cloud:** Polls, journals, webhooks, and cron jobs—each just a folder, versioned in Git, owned entirely by you.
 
 ## Security & Edge Cases
 
-1.  **Gateway Routing:** Internal component calls are authenticated via `x-forest-token` and bypass identity processing. External calls strip spoofed headers and require verified identity via HMAC-signed cookies.
+1.  **Gateway Routing:** Internal component calls are authenticated via `x-forest-token`. External calls strip spoofed headers and require verified identity via HMAC-signed cookies.
 2.  **Commit Sandboxing:** Per-component tokens ensure a compromised component cannot overwrite another's files.
 3.  **Strict Static Boundary:** The `public/` directory is physically isolated. Path traversal is mathematically blocked.
-4.  **Timing-Safe Auth:** `GIT_SECRET` is validated using `crypto.timingSafeEqual`.
+4.  **Timing-Safe Auth:** `GIT_SECRET` and `AUTH_SECRET` are validated using `crypto.timingSafeEqual`.
 5.  **Hardened Swaps:** Syntax errors in pushed code trigger a fallback to the previous working version.
 6.  **Self-Healing State:** On boot, the Core auto-commits tracked file modifications to restore push-to-deploy capability, while ignoring untracked Soil to protect Git history.
 7.  **Stateless Identity (FIP):** Device identity is verified via HMAC-SHA256 at the edge. No session stores, no JWT bloat, no centralized user databases.
