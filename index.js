@@ -2,8 +2,8 @@
 import { createServer, request, Agent } from "node:http";
 import { spawn, execFile } from "node:child_process";
 import { readdir, readFile, unlink, stat, mkdir, writeFile } from "node:fs/promises";
+import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
-import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
 import net from "node:net";
@@ -13,11 +13,36 @@ const exec = promisify(execFile);
 // ─── CONFIGURATION ─────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT) || 3000;
 const ROOT = process.cwd();
+
+function loadEnv() {
+  const envPath = join(ROOT, '.env');
+  if (!existsSync(envPath)) return;
+  try {
+    const content = readFileSync(envPath, 'utf8');
+    content.split('\n').forEach(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex === -1) return;
+      const key = trimmed.slice(0, eqIndex).trim();
+      let value = trimmed.slice(eqIndex + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (!process.env[key]) {
+        process.env[key] = value;
+      }
+    });
+  } catch (err) {
+    console.warn('[boot] ⚠️ Failed to load .env:', err.message);
+  }
+}
+loadEnv();
 const PUBLIC_DIR = join(ROOT, 'public');
 const GIT_SECRET = process.env.GIT_SECRET;
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const GIT_BACKUP_URL = process.env.GIT_BACKUP_URL;
-const RELOAD_TOKEN = crypto.randomBytes(16).toString('hex');
+const RELOAD_TOKEN = process.env.RELOAD_TOKEN || crypto.randomBytes(16).toString('hex');
 
 const envInt = (key, fallback) => {
   const val = parseInt(process.env[`FOREST_${key}`], 10);
@@ -690,7 +715,12 @@ while read oldrev newrev refname; do
 done
 `;
 
-  await writeFile(hookPath, hookContent, { mode: 0o755 });
+  try {
+    await writeFile(hookPath, hookContent, { mode: 0o755 });
+  } catch (err) {
+    console.error('[boot] ❌ Failed to write post-receive hook:', err.message);
+    throw err;
+  }
 }
 
 // ─── GIT INITIALIZATION ────────────────────────────────────────────────────
