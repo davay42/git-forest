@@ -601,16 +601,24 @@ const server = createServer(async (req, res) => {
     // Internal API: Reload endpoint
     if (path === "/_forest/reload" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
-      const isValid = (token === RELOAD_TOKEN) || (GIT_SECRET && timingSafeEqual(token, GIT_SECRET));
+      const isValid = (token === RELOAD_TOKEN) || (GIT_SECRET && timingSafeEqual(Buffer.from(token, 'utf8'), Buffer.from(GIT_SECRET, 'utf8')));
 
       if (!isValid) {
         res.writeHead(403, { "Content-Type": "text/plain" });
         return res.end("Forbidden: Invalid reload token");
-        console.log("[sync] ❌ Reload attempt with invalid token from", ip);
       }
 
-      console.log("[sync] 🔄 Reload requested via secure token.");
-      process.kill(process.pid, 'SIGHUP');
+      // Check for targeted reload header
+      const changedDirsHeader = req.headers['x-forest-changed-dirs'];
+      let targetComponents = null;
+
+      if (changedDirsHeader) {
+        targetComponents = changedDirsHeader.split(',').map(d => d.trim()).filter(d => d.length > 0);
+      }
+
+      // Execute reload asynchronously so we can respond to the git hook immediately
+      performReload(targetComponents).catch(err => console.error("[sync] Async reload failed:", err));
+
       res.writeHead(200, { "Content-Type": "text/plain" });
       return res.end("Reload triggered");
     }
@@ -677,6 +685,48 @@ const server = createServer(async (req, res) => {
   }
 });
 
+// ─── RELOAD MANAGER ────────────────────────────────────────────────────────
+async function performReload(targetComponents = null) {
+  if (isReloading) return;
+  isReloading = true;
+
+  const targetMsg = targetComponents ? ` (Targeted: ${targetComponents.join(', ')})` : " (Full scan)";
+  console.log(`[sync] 🔄 Performing reload${targetMsg}...`);
+
+  try {
+    const entries = await readdir(ROOT, { withFileTypes: true });
+    const newFolders = new Set();
+
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
+        if (existsSync(join(ROOT, entry.name, "index.js"))) {
+          newFolders.add(entry.name);
+
+          // ONLY swap if it's in the target list, or if no target list is provided (full scan)
+          if (!targetComponents || targetComponents.includes(entry.name)) {
+            await swapComponent(entry.name);
+          }
+        }
+      }
+    }
+
+    // ALWAYS check for deletions, regardless of targeted reload
+    for (const name of components.keys()) {
+      if (!newFolders.has(name)) {
+        console.log(`[sync] 🗑️ Removing deleted /${name}`);
+        killComponent(name);
+        components.delete(name);
+      }
+    }
+
+    console.log(`[sync] ✅ Reload complete. Active: ${[...components.keys()].join(", ") || "none"}`);
+  } catch (err) {
+    console.error("[sync] Reload failed:", err);
+  } finally {
+    isReloading = false;
+  }
+}
+
 // ─── GRACEFUL SHUTDOWN ──────────────────────────────────────────────────────
 function gracefulShutdown(signal) {
   console.log(`[core] ⏹️ Received ${signal}. Closing HTTP server gracefully...`);
@@ -687,6 +737,7 @@ function gracefulShutdown(signal) {
   setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
 }
 
+process.on("SIGHUP", () => performReload());
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
@@ -716,8 +767,18 @@ while read oldrev newrev refname; do
         echo "[git-forest] Core updated. Triggering full container restart."
         kill -TERM 1
         exit 0
+    fi
+
+    # 5. Calculate targeted component reloads
+    # Get changed files, strip everything after the first slash, remove duplicates, join with comma
+    CHANGED_DIRS=$(git diff --name-only $oldrev $newrev | grep -v "^index.js$" | grep -v "^public/" | grep -v "^\\.env" | sed 's|/.*||' | sort -u | tr '\\n' ',' | sed 's/,$//')
+
+    if [ -n "$CHANGED_DIRS" ]; then
+        echo "[git-forest] Targeted reload for: $CHANGED_DIRS"
+        curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" -H "x-forest-changed-dirs: $CHANGED_DIRS" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
     else
-        echo "[git-forest] Components updated. Triggering zero-downtime hot reload."
+        # Fallback to full reload if only global files changed (e.g., .gitignore, README)
+        echo "[git-forest] No specific component changes detected. Triggering full reload."
         curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
     fi
 done
