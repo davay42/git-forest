@@ -501,6 +501,10 @@ const server = createServer(async (req, res) => {
       delete req.headers['x-forest-token'];
       processIdentity(req, res);
       if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
+    } else {
+      if (req.headers['x-forest-device-id']) {
+        req.forestDeviceId = req.headers['x-forest-device-id'];
+      }
     }
 
     const url = new URL(req.url, "http://localhost");
