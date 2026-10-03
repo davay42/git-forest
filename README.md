@@ -102,7 +102,7 @@ process.on('SIGTERM', () => {
 ```
 
 ### 3. The Teleology (Committing Knowledge)
-Components **never** run `git` commands directly. They submit file changes to the Core's mutex queue via an internal HTTP endpoint, authenticated by a per-component token. This prevents `.git/index.lock` race conditions and enforces strict scope boundaries.
+Components **never** run `git` commands directly, nor do they make HTTP calls to the Core to mutate state. They simply write to the filesystem and request a commit via the native Node.js IPC channel (`process.send`). The Core serializes these requests in a mutex queue to prevent `.git/index.lock` race conditions and enforces strict scope boundaries.
 
 ```javascript
 // Inside a component
@@ -136,20 +136,17 @@ const deviceId = req.headers['x-forest-device-id'];
 // Map deviceId to a student in shop/students.md
 ```
 
-### 5. The Gateway (Internal/External Routing)
-The Core distinguishes between trusted internal calls and untrusted external traffic using a strict gateway pattern.
-
-**Internal Calls** (component-to-core):
-- Authenticated via `x-forest-token` header (matches `FOREST_COMPONENT_TOKEN` or `RELOAD_TOKEN`).
-- Verified against the Core's registry.
-- Bypass identity processing entirely; headers pass through unchanged.
+### 5. The Gateway (Routing & Identity)
+The Core's HTTP Gateway is strictly concerned with routing and external identity. Internal state mutations do not cross the HTTP membrane; they use the IPC umbilical cord.
 
 **External Calls** (browser users):
-- `x-forest-token` and `x-forest-device-id` headers are aggressively stripped (anti-spoofing).
+- `x-forest-device-id` and `x-forest-token` headers are aggressively stripped (anti-spoofing).
 - Identity is resolved from the `forest_session` cookie via HMAC-SHA256.
-- Verified `deviceId` is injected into the `x-forest-device-id` header.
+- Verified `deviceId` is injected into the `x-forest-device-id` header before proxying to the component.
 
-This separation prevents header spoofing attacks and ensures that only registered components can bypass identity checks.
+**Internal Coordination:**
+- State mutations flow through native IPC (`process.send`), strictly bound to the parent-child process tree.
+- The only HTTP endpoint reserved for internal coordination is `/_forest/reload`, triggered exclusively by the external Git `post-receive` shell hook using a master `RELOAD_TOKEN`.
 
 ## The Sovereign Ecosystem
 
@@ -162,8 +159,8 @@ Because the entire platform specification fits in roughly 4,000 tokens, modern L
 
 ## Security & Edge Cases
 
-1.  **Gateway Routing:** Internal component calls are authenticated via `x-forest-token`. External calls strip spoofed headers and require verified identity via HMAC-signed cookies.
-2.  **Commit Sandboxing:** Per-component tokens ensure a compromised component cannot overwrite another's files.
+1.  **Pure IPC Coordination:** Internal state mutations use native Node.js IPC, eliminating HTTP overhead and localhost token theater.
+2.  **Commit Sandboxing:** The Core validates IPC commit requests, ensuring components can only request commits for files within their own scope (e.g., `/payments` can only commit `payments/*` or `users/*/payments.md`).
 3.  **Strict Static Boundary:** The `public/` directory is physically isolated. Path traversal is mathematically blocked.
 4.  **Timing-Safe Auth:** `GIT_SECRET` and `AUTH_SECRET` are validated using `crypto.timingSafeEqual`.
 5.  **Hardened Swaps:** Syntax errors in pushed code trigger a fallback to the previous working version.
