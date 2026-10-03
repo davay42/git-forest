@@ -2,7 +2,7 @@
 import { createServer, request, Agent } from "node:http";
 import { spawn, execFile } from "node:child_process";
 import { readdir, readFile, unlink, stat, mkdir, writeFile } from "node:fs/promises";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, extname } from "node:path";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
@@ -31,7 +31,6 @@ const COMPONENT_READY_TIMEOUT_MS = envInt('COMPONENT_READY_TIMEOUT_MS', 2000);
 const COMPONENT_RESTART_DELAY_MS = envInt('COMPONENT_RESTART_DELAY_MS', 3000);
 const COMPONENT_CLEANUP_DELAY_MS = envInt('COMPONENT_CLEANUP_DELAY_MS', 5000);
 const PROXY_MAX_SOCKETS = envInt('PROXY_MAX_SOCKETS', 128);
-const COMMIT_BODY_LIMIT_BYTES = envInt('COMMIT_BODY_LIMIT_BYTES', 1048576);
 const BACKUP_INITIAL_DELAY_MS = envInt('BACKUP_INITIAL_DELAY_MS', 10000);
 const BACKUP_INTERVAL_MS = envInt('BACKUP_INTERVAL_MS', 300000);
 const SHUTDOWN_TIMEOUT_MS = envInt('SHUTDOWN_TIMEOUT_MS', 5000);
@@ -59,7 +58,6 @@ const GIT_HTTP_BACKEND = discoverGitBackend();
 const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript", ".json": "application/json", ".md": "text/markdown", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon" };
 const proxyAgent = new Agent({ keepAlive: true, maxSockets: PROXY_MAX_SOCKETS });
 const components = new Map();
-const componentTokens = new Map();
 let isReloading = false;
 const startTime = Date.now();
 
@@ -122,7 +120,7 @@ function recordFailedAuth(ip) {
   const now = Date.now();
   const entry = authBuckets.get(ip);
   if (!entry || now > entry.resetAt) {
-    if (authBuckets.size > 10000) authBuckets.clear(); // Prevent unbounded growth
+    if (authBuckets.size > 10000) authBuckets.clear();
     authBuckets.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
   } else {
     entry.count++;
@@ -204,27 +202,49 @@ async function swapComponent(name) {
   await unlink(socketPath).catch(() => { });
   console.log(`[sync] 🌱 Starting /${name}...`);
 
-  const componentToken = crypto.randomBytes(16).toString('hex');
   const newProc = spawn("node", [scriptPath], {
     env: {
       ...process.env,
       SOCKET_PATH: socketPath,
       COMPONENT_NAME: name,
       COMPONENT_DIR: join(ROOT, name),
-      FOREST_COMPONENT_TOKEN: componentToken,
       FOREST_CORE_PORT: PORT
     },
     stdio: ['inherit', 'inherit', 'inherit', 'ipc']
   });
-
-  componentTokens.set(componentToken, name);
 
   let ready = false;
   let exitedEarly = false;
 
   await new Promise((resolve) => {
     const done = () => resolve();
-    newProc.once('message', (msg) => { if (msg === 'ready') { ready = true; done(); } });
+
+    // Unified IPC Listener: Handles 'ready' signal and 'commit' requests
+    newProc.on('message', async (msg) => {
+      if (msg === 'ready') {
+        ready = true;
+        done();
+      } else if (msg && msg.type === 'commit') {
+        // ─── IPC COMMIT SANDBOX ─────────────────────────────────────────
+        const files = Array.isArray(msg.files) ? msg.files : [msg.files];
+        const isSafe = files.every(f => {
+          if (typeof f !== 'string') return false;
+          if (f === name || f.startsWith(`${name}/`)) return true;
+          const parts = f.split('/');
+          if (parts[0] === 'users' && parts.length === 3 && parts[2] === `${name}.md`) return true;
+          if (name === 'users' && f.startsWith('users/')) return true;
+          return false;
+        });
+
+        if (!isSafe) {
+          console.warn(`[security] /${name} attempted out-of-scope IPC commit:`, files);
+          return;
+        }
+
+        await queueGitCommit(files, msg.message || `chore: update ${name}`);
+      }
+    });
+
     newProc.once('exit', (code) => { exitedEarly = true; done(); });
     setTimeout(done, COMPONENT_READY_TIMEOUT_MS);
   });
@@ -232,15 +252,13 @@ async function swapComponent(name) {
   if (!ready) {
     console.log(`[sync] ❌ /${name} failed to start (ready=${ready}, exited=${exitedEarly}) — keeping previous version live`);
     if (!exitedEarly) newProc.kill("SIGKILL");
-    componentTokens.delete(componentToken);
     return;
   }
 
-  components.set(name, { socketPath, proc: newProc, token: componentToken, startTime: Date.now() });
+  components.set(name, { socketPath, proc: newProc, startTime: Date.now() });
   console.log(`[sync] 🔄 Swapped router for /${name}`);
 
   if (oldComponent) {
-    componentTokens.delete(oldComponent.token);
     oldComponent.proc.kill("SIGTERM");
     setTimeout(() => unlink(oldComponent.socketPath).catch(() => { }), COMPONENT_CLEANUP_DELAY_MS);
   }
@@ -248,7 +266,6 @@ async function swapComponent(name) {
   newProc.on("exit", (code) => {
     if (code !== 0 && code !== null && components.get(name)?.proc === newProc) {
       console.log(`[error] /${name} crashed with code ${code}. Restarting in 3s...`);
-      componentTokens.delete(componentToken);
       components.delete(name);
       setTimeout(() => swapComponent(name), COMPONENT_RESTART_DELAY_MS);
     }
@@ -258,7 +275,6 @@ async function swapComponent(name) {
 function killComponent(name) {
   const component = components.get(name);
   if (component) {
-    componentTokens.delete(component.token);
     component.proc.kill("SIGTERM");
     setTimeout(() => unlink(component.socketPath).catch(() => { }), COMPONENT_CLEANUP_DELAY_MS);
   }
@@ -464,20 +480,15 @@ const server = createServer(async (req, res) => {
     addSecurityHeaders(res);
 
     const internalToken = req.headers['x-forest-token'];
-
-    // A call is internal if it has a valid component token OR the master reload token
-    const isComponent = internalToken && componentTokens.has(internalToken);
     const isReload = internalToken && (internalToken === RELOAD_TOKEN || (GIT_SECRET && timingSafeEqual(Buffer.from(internalToken, 'utf8'), Buffer.from(GIT_SECRET, 'utf8'))));
-    const isInternalCall = isComponent || isReload;
+    const isInternalCall = isReload;
 
     if (!isInternalCall) {
-      // Public request: strip internal headers and process browser identity
       delete req.headers['x-forest-device-id'];
       delete req.headers['x-forest-token'];
       processIdentity(req, res);
       if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
     } else {
-      // Internal request: preserve headers, skip browser identity processing
       if (req.headers['x-forest-device-id']) {
         req.forestDeviceId = req.headers['x-forest-device-id'];
       }
@@ -495,55 +506,13 @@ const server = createServer(async (req, res) => {
       return proxyToComponent(req, res, subdomain, true);
     }
 
-    if (path === "/_forest/commit" && req.method === "POST") {
-      const token = req.headers['x-forest-token'];
-      const componentName = componentTokens.get(token);
-
-      if (!componentName) {
-        res.writeHead(403, { "Content-Type": "text/plain" });
-        return res.end("Forbidden: Invalid component token");
-      }
-
-      let body = "";
-      req.on("data", chunk => {
-        body += chunk;
-        if (body.length > COMMIT_BODY_LIMIT_BYTES) req.destroy();
-      });
-      req.on("end", async () => {
-        try {
-          const payload = JSON.parse(body);
-          let files = payload.files || [];
-          if (!Array.isArray(files)) files = [files];
-
-          const componentPrefix = `${componentName}/`;
-          const isSafe = files.every(f => typeof f === 'string' && (f.startsWith(componentPrefix) || f === componentName));
-
-          if (!isSafe) {
-            console.warn(`[security] Component ${componentName} attempted to commit files outside its scope:`, files);
-            res.writeHead(403, { "Content-Type": "application/json" });
-            return res.end(JSON.stringify({ status: "error", message: "Forbidden: Cannot commit files outside component scope" }));
-          }
-
-          if (files.length === 0) files = [componentName];
-
-          const result = await queueGitCommit(files, payload.message);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } catch (err) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ status: "error", message: "Invalid JSON" }));
-        }
-      });
-      return;
-    }
-
     // Internal API: Health check
     if (path === "/_forest/health" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/plain" });
       return res.end("OK");
     }
 
-    // Internal API: Reload endpoint
+    // Internal API: Reload endpoint (Triggered by Git Hook)
     if (path === "/_forest/reload" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
       const isValid = (token === RELOAD_TOKEN) || (GIT_SECRET && timingSafeEqual(Buffer.from(token, 'utf8'), Buffer.from(GIT_SECRET, 'utf8')));
@@ -553,7 +522,6 @@ const server = createServer(async (req, res) => {
         return res.end("Forbidden: Invalid reload token");
       }
 
-      // Check for targeted reload header
       const changedDirsHeader = req.headers['x-forest-changed-dirs'];
       let targetComponents = null;
 
@@ -561,7 +529,6 @@ const server = createServer(async (req, res) => {
         targetComponents = changedDirsHeader.split(',').map(d => d.trim()).filter(d => d.length > 0);
       }
 
-      // Execute reload asynchronously so we can respond to the git hook immediately
       performReload(targetComponents).catch(err => console.error("[sync] Async reload failed:", err));
 
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -570,14 +537,6 @@ const server = createServer(async (req, res) => {
 
     // Internal API: Status endpoint
     if (path === "/_forest/status" && req.method === "GET") {
-      const token = req.headers['x-forest-token'];
-      const componentName = componentTokens.get(token);
-
-      if (!componentName) {
-        res.writeHead(403, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ status: "error", message: "Forbidden: Invalid component token" }));
-      }
-
       const uptime = Date.now() - startTime;
       const componentInfo = {};
       for (const [name, component] of components) {
@@ -600,8 +559,7 @@ const server = createServer(async (req, res) => {
         git_auth_enabled: !!GIT_SECRET,
         proxy_trust_enabled: TRUST_PROXY,
         git_http_backend: GIT_HTTP_BACKEND,
-        is_reloading: isReloading,
-        requested_by: componentName
+        is_reloading: isReloading
       };
 
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -647,7 +605,6 @@ async function performReload(targetComponents = null) {
         if (existsSync(join(ROOT, entry.name, "index.js"))) {
           newFolders.add(entry.name);
 
-          // ONLY swap if it's in the target list, or if no target list is provided (full scan)
           if (!targetComponents || targetComponents.includes(entry.name)) {
             await swapComponent(entry.name);
           }
@@ -655,7 +612,6 @@ async function performReload(targetComponents = null) {
       }
     }
 
-    // ALWAYS check for deletions, regardless of targeted reload
     for (const name of components.keys()) {
       if (!newFolders.has(name)) {
         console.log(`[sync] 🗑️ Removing deleted /${name}`);
@@ -695,34 +651,22 @@ async function ensureGitHook() {
   const hookContent = `#!/bin/sh
 # Forest Git Hook - Dynamically generated by index.js
 while read oldrev newrev refname; do
-    # 1. Ignore branch deletions
     if [ "$newrev" = "0000000000000000000000000000000000000000" ]; then continue; fi
-
-    # 2. Only trigger on main/master branch pushes (ignores tags and WIP branches)
     if [ "$refname" != "refs/heads/main" ] && [ "$refname" != "refs/heads/master" ]; then continue; fi
-
-    # 3. Handle new branches (oldrev is all zeros) safely
     if [ "$oldrev" = "0000000000000000000000000000000000000000" ]; then
         curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
         continue
     fi
-
-    # 4. Check if the Core (index.js) was modified in this push
     if git diff --name-only $oldrev $newrev | grep -q "^index.js$"; then
         echo "[git-forest] Core updated. Triggering full container restart."
         kill -TERM 1
         exit 0
     fi
-
-    # 5. Calculate targeted component reloads
-    # Get changed files, strip everything after the first slash, remove duplicates, join with comma
     CHANGED_DIRS=$(git diff --name-only $oldrev $newrev | grep -v "^index.js$" | grep -v "^public/" | grep -v "^\\.env" | sed 's|/.*||' | sort -u | tr '\\n' ',' | sed 's/,$//')
-
     if [ -n "$CHANGED_DIRS" ]; then
         echo "[git-forest] Targeted reload for: $CHANGED_DIRS"
         curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" -H "x-forest-changed-dirs: $CHANGED_DIRS" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
     else
-        # Fallback to full reload if only global files changed (e.g., .gitignore, README)
         echo "[git-forest] No specific component changes detected. Triggering full reload."
         curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
     fi
@@ -785,11 +729,8 @@ function setupWebSocketUpgrade() {
   server.on('upgrade', (req, socket, head) => {
     try {
       const internalToken = req.headers['x-forest-token'];
-
-      // Match the HTTP interceptor logic
-      const isComponent = internalToken && componentTokens.has(internalToken);
       const isReload = internalToken && (internalToken === RELOAD_TOKEN || (GIT_SECRET && timingSafeEqual(Buffer.from(internalToken, 'utf8'), Buffer.from(GIT_SECRET, 'utf8'))));
-      const isInternalCall = isComponent || isReload;
+      const isInternalCall = isReload;
 
       if (!isInternalCall) {
         delete req.headers['x-forest-device-id'];

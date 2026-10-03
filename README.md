@@ -105,16 +105,21 @@ process.on('SIGTERM', () => {
 Components **never** run `git` commands directly. They submit file changes to the Core's mutex queue via an internal HTTP endpoint, authenticated by a per-component token. This prevents `.git/index.lock` race conditions and enforces strict scope boundaries.
 
 ```javascript
-async function commitKnowledge(files, message) {
-  const res = await fetch(`http://localhost:${process.env.FOREST_CORE_PORT}/_forest/commit`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-forest-token': process.env.FOREST_COMPONENT_TOKEN
-    },
-    body: JSON.stringify({ files, message })
-  });
-  return res.json();
+// Inside a component
+import { appendFile } from 'node:fs/promises';
+
+async function recordKnowledge(filePath, relativePath, data) {
+  // 1. Mutate the soil (filesystem)
+  await appendFile(filePath, `\n## Event {=...}\n${data}\n`);
+  
+  // 2. Request teleology (Git commit) via IPC
+  if (process.send) {
+    process.send({ 
+      type: 'commit', 
+      files: [relativePath], 
+      message: `feat: record event` 
+    });
+  }
 }
 ```
 
