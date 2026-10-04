@@ -58,8 +58,10 @@ const GIT_HTTP_BACKEND = discoverGitBackend();
 const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript", ".json": "application/json", ".md": "text/markdown", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon" };
 const proxyAgent = new Agent({ keepAlive: true, maxSockets: PROXY_MAX_SOCKETS });
 const components = new Map();
+const deviceUserMap = new Map(); // deviceId → userId
 let isReloading = false;
 const startTime = Date.now();
+
 
 // ─── GIT COMMIT QUEUE (MUTEX) ──────────────────────────────────────────────
 let gitQueue = Promise.resolve();
@@ -234,7 +236,11 @@ async function swapComponent(name) {
           if (parts[0] === 'users' && parts.length === 3 && parts[2] === `${name}.md`) return true;
           if (name === 'users' && f.startsWith('users/')) return true;
           return false;
-        });
+        }) else if (msg && msg.type === 'device-map') {
+          deviceUserMap.set(msg.deviceId, msg.userId);
+        } else if (msg && msg.type === 'device-unmap') {
+          deviceUserMap.delete(msg.deviceId);
+        }
 
         if (!isSafe) {
           console.warn(`[security] /${name} attempted out-of-scope IPC commit:`, files);
@@ -488,6 +494,8 @@ const server = createServer(async (req, res) => {
       delete req.headers['x-forest-token'];
       processIdentity(req, res);
       if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
+      const userId = deviceUserMap.get(req.forestDeviceId);
+      if (userId) req.headers['x-forest-user-id'] = userId;
     } else {
       if (req.headers['x-forest-device-id']) {
         req.forestDeviceId = req.headers['x-forest-device-id'];
