@@ -25,20 +25,9 @@ let totalNotifications = 0;
 let subscriptions = []; // { endpoint, keys, frequency, subscribedAt }
 const sseClients = new Set();
 
-// ─── Forest Commit Helper ──────────────────────────────────────────────
 async function commitToForest(files, message) {
-  try {
-    const res = await fetch(`http://localhost:${process.env.FOREST_CORE_PORT}/_forest/commit`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-forest-token': process.env.FOREST_COMPONENT_TOKEN
-      },
-      body: JSON.stringify({ files, message })
-    });
-    return res.json();
-  } catch (err) {
-    console.error('[notify] Commit failed:', err.message);
+  if (process.send) {
+    process.send({ type: 'commit', files: Array.isArray(files) ? files : [files], message });
   }
 }
 

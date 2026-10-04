@@ -13,7 +13,6 @@ let clicks = 0;
 let commitTimer = null;
 const clients = new Set();
 
-// 1. Hydrate from Disk on Boot (Crash Recovery)
 (async () => {
   try {
     const content = await readFile(STATE_FILE, 'utf8');
@@ -30,26 +29,17 @@ function broadcast(data) {
   for (const res of clients) res.write(payload);
 }
 
+async function commitToForest(files, message) {
+  if (process.send) {
+    process.send({ type: 'commit', files: Array.isArray(files) ? files : [files], message });
+  }
+}
+
 // 2. The Delayed Commit Engine (Git Audit)
 function scheduleCommit() {
   if (commitTimer) clearTimeout(commitTimer);
-
   commitTimer = setTimeout(async () => {
-    try {
-      // Ask the Core to snapshot the current disk state into Git
-      const res = await fetch(`http://localhost:${CORE_PORT}/_forest/commit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-forest-token': TOKEN },
-        body: JSON.stringify({
-          files: [`${NAME}/counter.md`],
-          message: `test: snapshot at ${clicks} clicks`
-        })
-      });
-      const result = await res.json();
-      if (result.status === 'ok') console.log(`🌲 [${NAME}] Git snapshot committed.`);
-    } catch (err) {
-      console.error(`[${NAME}] Git commit failed:`, err);
-    }
+    commitToForest([`${NAME}/counter.md`], `test: snapshot at ${clicks} clicks`);
     commitTimer = null;
   }, 60000); // 1 minute debounce for the Git commit
 }
