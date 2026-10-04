@@ -226,6 +226,10 @@ async function swapComponent(name) {
       if (msg === 'ready') {
         ready = true;
         done();
+      } else if (msg && msg.type === 'device-map') {
+        deviceUserMap.set(msg.deviceId, msg.userId);
+      } else if (msg && msg.type === 'device-unmap') {
+        deviceUserMap.delete(msg.deviceId);
       } else if (msg && msg.type === 'commit') {
         // ─── IPC COMMIT SANDBOX ─────────────────────────────────────────
         const files = Array.isArray(msg.files) ? msg.files : [msg.files];
@@ -236,11 +240,7 @@ async function swapComponent(name) {
           if (parts[0] === 'users' && parts.length === 3 && parts[2] === `${name}.md`) return true;
           if (name === 'users' && f.startsWith('users/')) return true;
           return false;
-        }) else if (msg && msg.type === 'device-map') {
-          deviceUserMap.set(msg.deviceId, msg.userId);
-        } else if (msg && msg.type === 'device-unmap') {
-          deviceUserMap.delete(msg.deviceId);
-        }
+        })
 
         if (!isSafe) {
           console.warn(`[security] /${name} attempted out-of-scope IPC commit:`, files);
@@ -494,8 +494,6 @@ const server = createServer(async (req, res) => {
       delete req.headers['x-forest-token'];
       processIdentity(req, res);
       if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
-      const userId = deviceUserMap.get(req.forestDeviceId);
-      if (userId) req.headers['x-forest-user-id'] = userId;
     } else {
       if (req.headers['x-forest-device-id']) {
         req.forestDeviceId = req.headers['x-forest-device-id'];
