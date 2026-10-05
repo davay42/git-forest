@@ -220,8 +220,6 @@ async function swapComponent(name) {
 
   await new Promise((resolve) => {
     const done = () => resolve();
-
-    // Unified IPC Listener: Handles 'ready' signal and 'commit' requests
     newProc.on('message', async (msg) => {
       if (msg === 'ready') {
         ready = true;
@@ -231,26 +229,9 @@ async function swapComponent(name) {
       } else if (msg && msg.type === 'device-unmap') {
         deviceUserMap.delete(msg.deviceId);
       } else if (msg && msg.type === 'commit') {
-        // ─── IPC COMMIT SANDBOX ─────────────────────────────────────────
-        const files = Array.isArray(msg.files) ? msg.files : [msg.files];
-        const isSafe = files.every(f => {
-          if (typeof f !== 'string') return false;
-          if (f === name || f.startsWith(`${name}/`)) return true;
-          const parts = f.split('/');
-          if (parts[0] === 'users' && parts.length === 3 && parts[2] === `${name}.md`) return true;
-          if (name === 'users' && f.startsWith('users/')) return true;
-          return false;
-        })
-
-        if (!isSafe) {
-          console.warn(`[security] /${name} attempted out-of-scope IPC commit:`, files);
-          return;
-        }
-
-        await queueGitCommit(files, msg.message || `chore: update ${name}`);
+        await queueGitCommit(msg.files || [], msg.message || `chore: update ${name}`);
       }
     });
-
     newProc.once('exit', (code) => { exitedEarly = true; done(); });
     setTimeout(done, COMPONENT_READY_TIMEOUT_MS);
   });
