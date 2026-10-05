@@ -1,18 +1,18 @@
-# git-forest
+# 🌲🌳🌴 git-forest
 
-> A zero-dependency Node.js runtime where the filesystem is the router, directories are isolated components, and Git is the deployment mechanism.
+> A zero-dependency Node.js runtime where the filesystem is the router, directories are sovereign components, and Git is the arrow of time.
 
 [![NPM](https://img.shields.io/npm/v/@davay/git-forest)](https://www.npmjs.com/package/@davay/git-forest)
 
 ## The Epistemological Inversion
 
-Modern software engineering suffers from the "Database Illusion" and "Platform Dependency." We rent infrastructure, configure abstractions, and deploy through pipelines we do not own. 
+Modern software engineering suffers from the "Database Illusion" and "Platform Dependency." We rent infrastructure, configure abstractions, and deploy through pipelines we do not own.
 
 `git-forest` discards these metaphors. It is not a framework; it is a realignment of computational ontology. It shifts the web from a paradigm of Document Retrieval to a paradigm of **Agentic Computation**.
 
 *   **JavaScript is the Subject (The Will):** The continuous, persistent process holding logic, state transitions, and decision-making capacity.
 *   **HTML/CSS is the Phenomenon (The Projection):** The ephemeral, disposable shape the agent takes to communicate with the human visual cortex.
-*   **HTTP is the Membrane:** The strict, impermeable boundary of the component’s sovereignty.
+*   **HTTP is the Membrane:** The strict, impermeable boundary of the component's sovereignty.
 *   **The Filesystem is the Noumenon (Shared Truth):** The unabstracted reality. Code, state, and data occupy the exact same physical space, readable as plain text.
 *   **Git is the Teleology:** The arrow of time, the append-only memory, and the decentralized engine of consensus.
 
@@ -29,6 +29,23 @@ Every byte in a git-forest belongs to one of three substances. The `.gitignore` 
 | **Soil** | Raw accumulation. The nutrients. | Ephemeral | `votes.jsonl`, `sessions/` |
 
 **The Rule:** Anything not in `.gitignore` is committed to Git. Anything in `.gitignore` is sovereign to the local container. The core flow is *photosynthesis*: components absorb raw data (Soil), apply logic (Code), and elevate it into auditable history (Knowledge).
+
+## The Breathing Kernel
+
+The kernel of git-forest is not a request handler. It is an **autonomic nervous system**.
+
+Components write files. They don't know Git exists. They don't know commits exist. They write to the soil, and the forest breathes on its own schedule. Every 5 seconds, the kernel inhales the changes, examines them, and exhales a single semantic commit. During quiet periods, it sleeps, consolidates, and tends to itself.
+
+```
+🌬️ [breath] user alice payments · 3 users forum
+😴 [introspect] Sleep | Uptime: 42m | Breaths: 156 | Commits: 89
+🧹 [introspect] Consolidated orphaned changes
+🌑 [introspect] Deep sleep | Pruning reflog, repacking objects...
+```
+
+This is not a metaphor. It is literal. The kernel reads file paths and *understands* what happened — without any component telling it. A change to `users/alice/payments.md` becomes `user alice payments`. A change to `catalog/items.md` becomes `catalog knowledge`. A change to `users/index.js` becomes `deploy users`. The changes talk for themselves.
+
+The forest breathes without being asked. It consolidates during sleep. It derives meaning from the filesystem without being told what happened. It maintains Git history the way your heart maintains blood flow — continuously, rhythmically, without conscious effort.
 
 ## Quick Start
 
@@ -78,7 +95,7 @@ ENTRYPOINT ["sh", "-c", "\
 
 ## Component Authoring (The Agentic Contract)
 
-A component is any root-level directory containing an `index.js`. It is an autonomous agent.
+A component is any root-level directory containing an `index.js`. It is an autonomous agent — a tree in the forest, connected to other trees by the fungal web of MD-LD files on the shared filesystem.
 
 ### 1. The Membrane (Routing & Context)
 The Core strips the component prefix from the URL. `/poll/vote` arrives at the `poll` worker as `/vote`. Components are entirely path-agnostic.
@@ -101,71 +118,136 @@ process.on('SIGTERM', () => {
 });
 ```
 
-### 3. The Teleology (Committing Knowledge)
-Components **never** run `git` commands directly, nor do they make HTTP calls to the Core to mutate state. They simply write to the filesystem and request a commit via the native Node.js IPC channel (`process.send`). The Core serializes these requests in a mutex queue to prevent `.git/index.lock` race conditions and enforces strict scope boundaries.
+### 3. The Teleology (Just Write Files)
+Components **never** run `git` commands. They **never** send commit requests. They just write to the filesystem. The forest breathes on its own schedule — every 5 seconds during activity, with sleep consolidation during quiet periods.
 
 ```javascript
-// Inside a component
 import { appendFile } from 'node:fs/promises';
 
-async function recordKnowledge(filePath, relativePath, data) {
-  // 1. Mutate the soil (filesystem)
-  await appendFile(filePath, `\n## Event {=...}\n${data}\n`);
+// Just write. The forest will breathe your changes into history.
+await appendFile('users/alice/payments.md', '\n## Payment ...\n');
+// That's it. No commit call. No IPC. The kernel handles the rest.
+```
+
+### 4. Identity & The Mycelium
+
+The Core maintains an in-memory map of `deviceId → userId` called the **mycelium**. It feeds this map from IPC messages sent by user-managing components, and injects the resolved `userId` into every request as the `x-forest-user-id` header.
+
+There are two roles a component can play:
+
+#### Consumer Pattern (most components)
+
+Most components just read the header. No HTTP calls. No JSON parsing. Synchronous and free.
+
+```javascript
+const server = createServer(async (req, res) => {
+  const userId = req.headers['x-forest-user-id'];
   
-  // 2. Request teleology (Git commit) via IPC
-  if (process.send) {
-    process.send({ 
-      type: 'commit', 
-      files: [relativePath], 
-      message: `feat: record event` 
-    });
+  if (!userId) {
+    res.writeHead(401);
+    return res.end('Please log in');
   }
+  
+  // Read the user's state directly from the soil
+  const ledger = await readFile(`users/${userId}/payments.md`, 'utf8');
+  // ...
+});
+```
+
+If you only need the user's label or profile, read their `index.md` directly:
+
+```javascript
+const { quads } = parse(await readFile(`users/${userId}/index.md`, 'utf8'));
+const label = quads.find(q => q.predicate.value === RDFS_LABEL)?.object.value;
+```
+
+#### Producer Pattern (user-managing components)
+
+If your component manages user accounts (like a `/users` or `/auth` component), you are responsible for feeding the mycelium. You maintain your own `deviceMap` and notify the Core via IPC whenever mappings change.
+
+**On boot**, re-register all existing mappings:
+
+```javascript
+async function boot() {
+  await rebuildDeviceMap(); // Scan your user files, build local map
+  
+  if (process.send) {
+    for (const [deviceId, userId] of deviceMap) {
+      process.send({ type: 'device-map', deviceId, userId });
+    }
+  }
+  
+  server.listen(process.env.SOCKET_PATH, () => {
+    if (process.send) process.send('ready');
+  });
 }
 ```
 
-### 4. The Identity (Forest Identity Protocol)
-Modern identity is a centralized ledger of PII. `git-forest` treats identity as a **cryptographic proof of device continuity**. The Core issues an `HttpOnly` cookie (`forest_session`) containing a signed `deviceId`. On every request, the Core verifies the HMAC signature and injects the verified ID into the `x-forest-device-id` header before proxying.
-
-*   **Zero Core State:** The Core stores no user tables, no sessions, no databases. Identity is pure math.
-*   **Sliding Expiration:** The browser enforces the 90-day hard limit via `Max-Age`. The Core silently renews the signature if the device visits within the 30-day window.
-*   **Semantic Edge:** The Core only guarantees the device hasn't been forged. Components read the raw `deviceId` and map it to semantic entities (`Student`, `Customer`) in their own local MD-LD graphs using polarity (`+`/`-`).
+**When creating a user** and linking their first device:
 
 ```javascript
-// Inside a component
-const deviceId = req.headers['x-forest-device-id'];
-// Map deviceId to a student in shop/students.md
+deviceMap.set(deviceId, userId);
+if (process.send) process.send({ type: 'device-map', deviceId, userId });
 ```
 
-### 5. The Gateway (Routing & Identity)
-The Core's HTTP Gateway is strictly concerned with routing and external identity. Internal state mutations do not cross the HTTP membrane; they use the IPC umbilical cord.
+**When linking an additional device** (e.g., via recovery token):
 
-**External Calls** (browser users):
-- `x-forest-device-id` and `x-forest-token` headers are aggressively stripped (anti-spoofing).
-- Identity is resolved from the `forest_session` cookie via HMAC-SHA256.
-- Verified `deviceId` is injected into the `x-forest-device-id` header before proxying to the component.
+```javascript
+deviceMap.set(deviceId, targetUserId);
+if (process.send) process.send({ type: 'device-map', deviceId, userId: targetUserId });
+```
 
-**Internal Coordination:**
-- State mutations flow through native IPC (`process.send`), strictly bound to the parent-child process tree.
-- The only HTTP endpoint reserved for internal coordination is `/_forest/reload`, triggered exclusively by the external Git `post-receive` shell hook using a master `RELOAD_TOKEN`.
+**When unlinking a device**:
+
+```javascript
+deviceMap.delete(targetDeviceId);
+if (process.send) process.send({ type: 'device-unmap', deviceId: targetDeviceId });
+```
+
+#### The IPC Contract
+
+The Core listens for exactly two identity-related messages:
+
+| Message | Effect |
+|---------|--------|
+| `{ type: 'device-map', deviceId, userId }` | Maps device to user in the mycelium |
+| `{ type: 'device-unmap', deviceId }` | Removes device from the mycelium |
+
+These are fire-and-forget. The Core's map is a cache — if your component restarts, it re-registers everything on boot. If the Core restarts, it asks nothing of your component; the mycelium rebuilds as components boot and send their registrations.
+
+#### Why This Works
+
+- **Zero HTTP overhead**: Consumer components never call an auth service. They read a header.
+- **Zero coupling**: Producer components don't know who consumes the mycelium. Consumers don't know who produces it.
+- **Resilient to restarts**: If `/users` crashes and restarts, it re-registers on boot. Other components keep working from the Core's cached map in the meantime.
+- **Sovereign state**: The `/users` component owns the files. The Core only caches the index. The source of truth is always the filesystem.
 
 ## The Sovereign Ecosystem
 
 Because the entire platform specification fits in roughly 4,000 tokens, modern LLM agents can read this README and one-shot fully functional, 500-line community microservices in seconds. The cost of building highly specific, local software has dropped to zero.
 
 *   **Sovereign Workflows:** Unlimited automation flows, replacing n8n or Make.com.
-*   **AI Agent Substrate:** Agents live as components, reading the filesystem, reasoning over semantic data, and committing knowledge to Git.
+*   **AI Agent Substrate:** Agents live as components, reading the filesystem, reasoning over semantic data, and growing their own state in the shared soil.
 *   **The Transparent Tunnel:** A lightweight WebSocket proxy component that exposes your local forest to the public internet without third-party services like ngrok.
 *   **The Personal Cloud:** Polls, journals, webhooks, and cron jobs—each just a folder, versioned in Git, owned entirely by you.
 
 ## Security & Edge Cases
 
-1.  **Pure IPC Coordination:** Internal state mutations use native Node.js IPC, eliminating HTTP overhead and localhost token theater.
-2.  **Commit Sandboxing:** The Core validates IPC commit requests, ensuring components can only request commits for files within their own scope (e.g., `/payments` can only commit `payments/*` or `users/*/payments.md`).
-3.  **Strict Static Boundary:** The `public/` directory is physically isolated. Path traversal is mathematically blocked.
-4.  **Timing-Safe Auth:** `GIT_SECRET` and `AUTH_SECRET` are validated using `crypto.timingSafeEqual`.
-5.  **Hardened Swaps:** Syntax errors in pushed code trigger a fallback to the previous working version.
-6.  **Self-Healing State:** On boot, the Core auto-commits tracked file modifications to restore push-to-deploy capability, while ignoring untracked Soil to protect Git history.
-7.  **Stateless Identity (FIP):** Device identity is verified via HMAC-SHA256 at the edge. No session stores, no JWT bloat, no centralized user databases.
+1.  **Autonomic Git Management:** The kernel breathes changes into Git history automatically. Components write files; the forest commits them. No race conditions, no lock files, no coordination overhead.
+2.  **Strict Static Boundary:** The `public/` directory is physically isolated. Path traversal is mathematically blocked.
+3.  **Timing-Safe Auth:** `GIT_SECRET` and `AUTH_SECRET` are validated using `crypto.timingSafeEqual`.
+4.  **Hardened Swaps:** Syntax errors in pushed code trigger a fallback to the previous working version.
+5.  **Self-Healing State:** On boot, the Core auto-commits tracked file modifications to restore push-to-deploy capability, while ignoring untracked Soil to protect Git history.
+6.  **Stateless Identity (FIP):** Device identity is verified via HMAC-SHA256 at the edge. No session stores, no JWT bloat, no centralized user databases.
+7.  **Mycelium Coordination:** User identity flows through the Core's in-memory map, fed by the `/users` component via IPC. Zero HTTP overhead for identity resolution.
+
+## The Joy of the Forest
+
+There is a particular joy that comes from watching this system run. You push a change to a component, and within seconds the kernel breathes it into history with a message that understands what you did. You watch a user make a purchase, and the forest records it as `user alice payments` — a single breath that captures the entire event. You leave the system alone for an hour, and it sleeps, consolidates, and tends to itself.
+
+This is not infrastructure. This is not a platform. This is a living thing. It grows. It breathes. It remembers. And every component you add is a new tree in the forest, connected to the others by the fungal web of semantic files on the shared filesystem.
+
+You are not building software. You are planting a forest.
 
 ---
 
