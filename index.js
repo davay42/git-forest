@@ -112,13 +112,18 @@ function startBreathing() {
 }
 
 function describeBreath(files) {
-  const users = new Set(), components = new Set(), codeChanges = [], knowledgeChanges = [];
+  const users = new Set();
+  const components = new Set();
+  const codeChanges = [];
+  const knowledgeChanges = [];
 
   for (const f of files) {
     const parts = f.split('/');
     if (parts[0] === 'users' && parts.length >= 2) {
       users.add(parts[1]);
-      if (parts.length >= 3 && parts[2] !== 'index.md') components.add(parts[2].replace('.md', ''));
+      if (parts.length >= 3 && parts[2] !== 'index.md') {
+        components.add(parts[2].replace('.md', ''));
+      }
     } else if (parts.length >= 2 && parts[1] === 'index.js') {
       codeChanges.push(parts[0]);
     } else if (parts[0] !== 'public' && parts[0] !== '.gitignore' && parts[0] !== 'index.js') {
@@ -127,27 +132,34 @@ function describeBreath(files) {
   }
 
   const segments = [];
-  if (codeChanges.length) segments.push(`deploy ${codeChanges.join('+')}`);
-  if (knowledgeChanges.length) segments.push(`${knowledgeChanges.join('+')} knowledge`);
-  if (users.size) {
+  if (codeChanges.length > 0) segments.push(`deploy ${codeChanges.join('+')}`);
+  if (knowledgeChanges.length > 0) segments.push(`${knowledgeChanges.join('+')} knowledge`);
+  if (users.size > 0) {
     const compList = [...components].join('+');
-    segments.push(users.size === 1 ? `user ${[...users][0]}${compList ? ` ${compList}` : ''}` : `${users.size} users${compList ? ` ${compList}` : ''}`);
+    if (users.size === 1) segments.push(`user ${[...users][0]}${compList ? ` ${compList}` : ''}`);
+    else segments.push(`${users.size} users${compList ? ` ${compList}` : ''}`);
   }
 
-  return segments.length ? segments.join(' · ') : `update ${files.length} file(s)`;
+  if (segments.length === 0) return `update ${files.length} file(s)`;
+  return segments.join(' · ');
 }
 
 async function introspect(isDeep) {
   const active = [...components.keys()].join(', ') || 'none';
-  console.log(`[introspect] ${isDeep ? '🌑 Deep sleep' : '😴 Sleep'} | Uptime: ${Math.floor((Date.now() - startTime) / 60000)}m | Breaths: ${breathCount} | Commits: ${commitCount} | Components: ${active}`);
+  const uptimeMin = Math.floor((Date.now() - startTime) / 60000);
+  const state = isDeep ? '🌑 Deep sleep' : '😴 Sleep';
+
+  console.log(`[introspect] ${state} | Uptime: ${uptimeMin}m | Breaths: ${breathCount} | Commits: ${commitCount} | Components: ${active}`);
 
   // Consolidate any orphaned changes
-  const { stdout } = await exec('git', ['status', '--porcelain'], { cwd: ROOT }).catch(() => ({ stdout: '' }));
-  if (stdout.trim()) {
-    await exec('git', ['add', '-A'], { cwd: ROOT });
-    await exec('git', ['commit', '-m', 'chore: sleep consolidation'], { cwd: ROOT });
-    console.log('[introspect] 🧹 Consolidated orphaned changes');
-  }
+  try {
+    const { stdout } = await exec('git', ['status', '--porcelain'], { cwd: ROOT });
+    if (stdout.trim()) {
+      await exec('git', ['add', '-A'], { cwd: ROOT });
+      await exec('git', ['commit', '-m', 'chore: sleep consolidation'], { cwd: ROOT });
+      console.log('[introspect] 🧹 Consolidated orphaned changes');
+    }
+  } catch { }
 
   // Optimize repository
   await exec('git', ['gc', '--auto'], { cwd: ROOT }).catch(() => { });
@@ -163,48 +175,16 @@ async function introspect(isDeep) {
   }
 
   for (const [name, c] of components) {
-    console.log(`[introspect]   /${name}: ${formatUptime(Date.now() - c.startTime)}`);
+    const up = Math.floor((Date.now() - c.startTime) / 60000);
+    console.log(`[introspect]   /${name}: ${up}m`);
   }
 }
 
 // ─── SECURITY UTILITIES ────────────────────────────────────────────────────
 function timingSafeEqual(a, b) {
-  a = String(a); b = String(b);
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-}
-
-function isValidToken(token) {
-  return token === RELOAD_TOKEN || (GIT_SECRET && timingSafeEqual(token, GIT_SECRET));
-}
-
-function formatUptime(ms) {
-  const m = Math.floor(ms / 60000);
-  const s = Math.floor((ms % 60000) / 1000);
-  return `${m}m ${s}s`;
-}
-
-const safeUnlink = (path) => unlink(path).catch(() => { });
-
-const DEFAULT_HTML = (componentCount, componentList) =>
-  `<!DOCTYPE html><html><body style="font-family:system-ui;max-width:600px;margin:4rem auto;text-align:center;color:#1a1a1a;">
-    <h1>🌲 git-forest is running!</h1>
-    <p>Your forest is alive, but the canopy is empty.</p>
-    <p>Create a <code>public/index.html</code> file to build your frontend, or add a folder with an <code>index.js</code> to create a backend component.</p>
-    <hr style="margin:2rem 0;border:none;border-top:1px solid #e5e7eb;">
-    <p style="color:#6b7280;font-size:0.9rem;">Active Components: <strong>${componentCount}</strong></p>
-    <ul style="list-style:none;padding:0;">${componentList.map(c => `<li><a href="/${c}" style="color:#2563eb;">/${c}</a></li>`).join('') || '<li style="color:#9ca3af;">None yet. Create a directory with an index.js to start.</li>'}</ul>
-  </body></html>`;
-
-async function discoverComponents() {
-  const entries = await readdir(ROOT, { withFileTypes: true });
-  const components = [];
-  for (const entry of entries) {
-    if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
-      if (existsSync(join(ROOT, entry.name, "index.js"))) components.push(entry.name);
-    }
-  }
-  return components;
+  const bufA = Buffer.from(String(a)), bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 const authBuckets = new Map();
@@ -264,7 +244,11 @@ function processIdentity(req, res) {
     const parts = token.split('.');
     if (parts.length === 3) {
       const [dId, iAt, sig] = parts;
-      if (timingSafeEqual(sig, signDevice(dId, iAt))) {
+      const expectedSig = signDevice(dId, iAt);
+      const sigBuffer = Buffer.from(sig, 'utf8');
+      const expectedSigBuffer = Buffer.from(expectedSig, 'utf8');
+
+      if (timingSafeEqual(sigBuffer, expectedSigBuffer)) {
         deviceId = dId;
         issuedAt = parseInt(iAt, 10);
         if (Date.now() - issuedAt > RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000) {
@@ -299,7 +283,7 @@ async function swapComponent(name) {
   const socketPath = `/tmp/forest-${name}-${Date.now()}.sock`;
   const scriptPath = join(ROOT, name, "index.js");
 
-  await safeUnlink(socketPath);
+  await unlink(socketPath).catch(() => { });
   console.log(`[sync] 🌱 Starting /${name}...`);
 
   const newProc = spawn("node", [scriptPath], {
@@ -344,7 +328,7 @@ async function swapComponent(name) {
 
   if (oldComponent) {
     oldComponent.proc.kill("SIGTERM");
-    setTimeout(() => safeUnlink(oldComponent.socketPath), COMPONENT_CLEANUP_DELAY_MS);
+    setTimeout(() => unlink(oldComponent.socketPath).catch(() => { }), COMPONENT_CLEANUP_DELAY_MS);
   }
 
   newProc.on("exit", (code) => {
@@ -360,7 +344,7 @@ function killComponent(name) {
   const component = components.get(name);
   if (component) {
     component.proc.kill("SIGTERM");
-    setTimeout(() => safeUnlink(component.socketPath), COMPONENT_CLEANUP_DELAY_MS);
+    setTimeout(() => unlink(component.socketPath).catch(() => { }), COMPONENT_CLEANUP_DELAY_MS);
   }
 }
 
@@ -376,7 +360,9 @@ async function serveStatic(req, res) {
   }
 
   const relPath = filePath.slice(PUBLIC_DIR.length);
-  if (relPath.split('/').some(p => ['.git', '.env', '.env.local', '.env.production', '.DS_Store'].includes(p))) {
+  const blockedNames = ['.git', '.env', '.env.local', '.env.production', '.DS_Store'];
+  const parts = relPath.split('/');
+  if (parts.some(p => blockedNames.includes(p))) {
     res.writeHead(403);
     return res.end("Forbidden");
   }
@@ -394,7 +380,14 @@ async function serveStatic(req, res) {
   } catch {
     if (url.pathname === '/' || url.pathname === '/index.html') {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      return res.end(DEFAULT_HTML(components.size, [...components.keys()]));
+      return res.end(`<!DOCTYPE html><html><body style="font-family:system-ui;max-width:600px;margin:4rem auto;text-align:center;color:#1a1a1a;">
+        <h1>🌲 git-forest is running!</h1>
+        <p>Your forest is alive, but the canopy is empty.</p>
+        <p>Create a <code>public/index.html</code> file to build your frontend, or add a folder with an <code>index.js</code> to create a backend component.</p>
+        <hr style="margin:2rem 0;border:none;border-top:1px solid #e5e7eb;">
+        <p style="color:#6b7280;font-size:0.9rem;">Active Components: <strong>${components.size}</strong></p>
+        <ul style="list-style:none;padding:0;">${[...components.keys()].map(c => `<li><a href="/${c}" style="color:#2563eb;">/${c}</a></li>`).join('') || '<li style="color:#9ca3af;">None yet. Create a directory with an index.js to start.</li>'}</ul>
+      </body></html>`);
     }
     res.writeHead(404);
     res.end("Not Found");
@@ -419,7 +412,9 @@ function checkGitAuth(req, res, ip) {
     return null;
   }
 
-  const [user, password] = Buffer.from(auth.split(" ")[1], "base64").toString("utf-8").split(":");
+  const base64 = auth.split(" ")[1];
+  const credentials = Buffer.from(base64, "base64").toString("utf-8");
+  const [user, password] = credentials.split(":");
 
   if (!password || !timingSafeEqual(password, GIT_SECRET)) {
     recordFailedAuth(ip);
@@ -464,12 +459,14 @@ function handleGit(req, res, ip) {
       parsed = true;
       const hdr = buf.subarray(0, end).toString();
       const status = hdr.match(/Status: (\d+)/)?.[1] || 200;
-      const headers = Object.fromEntries(
-        hdr.split("\r\n")
-          .map(l => { const i = l.indexOf(":"); return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : null; })
-          .filter(Boolean)
-          .filter(([k]) => k.toLowerCase() !== "status")
-      );
+      const headers = {};
+      hdr.split("\r\n").forEach(l => {
+        const i = l.indexOf(":");
+        if (i > 0) {
+          const k = l.slice(0, i).trim();
+          if (k.toLowerCase() !== "status") headers[k] = l.slice(i + 1).trim();
+        }
+      });
       res.writeHead(parseInt(status), headers);
       res.write(buf.subarray(end + 4));
     }
@@ -521,12 +518,23 @@ async function syncToBackup() {
   if (!GIT_BACKUP_URL) return;
 
   try {
-    await exec('git', ['remote', 'get-url', 'backup'], { cwd: ROOT }).catch(() =>
-      exec('git', ['remote', 'add', 'backup', GIT_BACKUP_URL], { cwd: ROOT })
-    );
+    try {
+      await exec('git', ['remote', 'get-url', 'backup'], { cwd: ROOT });
+    } catch {
+      await exec('git', ['remote', 'add', 'backup', GIT_BACKUP_URL], { cwd: ROOT });
+    }
 
-    const { stdout: count } = await exec('git', ['rev-list', '--count', 'backup/main..main'], { cwd: ROOT }).catch(() => ({ stdout: '1' }));
-    if (parseInt(count.trim(), 10) === 0) return;
+    let needsPush = true;
+    try {
+      const { stdout: count } = await exec('git', ['rev-list', '--count', 'backup/main..main'], { cwd: ROOT });
+      if (parseInt(count.trim(), 10) === 0) {
+        needsPush = false;
+      }
+    } catch {
+      needsPush = true;
+    }
+
+    if (!needsPush) return;
 
     console.log(`[backup] 🔄 New commits detected. Pushing to backup...`);
     await exec('git', ['push', '--set-upstream', 'backup', 'main'], { cwd: ROOT });
@@ -542,7 +550,8 @@ const server = createServer(async (req, res) => {
     addSecurityHeaders(res);
 
     const internalToken = req.headers['x-forest-token'];
-    const isInternalCall = internalToken && isValidToken(internalToken);
+    const isReload = internalToken && (internalToken === RELOAD_TOKEN || (GIT_SECRET && timingSafeEqual(Buffer.from(internalToken, 'utf8'), Buffer.from(GIT_SECRET, 'utf8'))));
+    const isInternalCall = isReload;
 
     if (!isInternalCall) {
       delete req.headers['x-forest-device-id'];
@@ -550,8 +559,10 @@ const server = createServer(async (req, res) => {
       delete req.headers['x-forest-user-id'];
       processIdentity(req, res);
       if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
-    } else if (req.headers['x-forest-device-id']) {
-      req.forestDeviceId = req.headers['x-forest-device-id'];
+    } else {
+      if (req.headers['x-forest-device-id']) {
+        req.forestDeviceId = req.headers['x-forest-device-id'];
+      }
     }
 
     const url = new URL(req.url, "http://localhost");
@@ -573,12 +584,20 @@ const server = createServer(async (req, res) => {
 
     if (path === "/_forest/reload" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
-      if (!isValidToken(token)) {
+      const isValid = (token === RELOAD_TOKEN) || (GIT_SECRET && timingSafeEqual(Buffer.from(token, 'utf8'), Buffer.from(GIT_SECRET, 'utf8')));
+
+      if (!isValid) {
         res.writeHead(403, { "Content-Type": "text/plain" });
         return res.end("Forbidden: Invalid reload token");
       }
 
-      const targetComponents = req.headers['x-forest-changed-dirs']?.split(',').map(d => d.trim()).filter(Boolean) || null;
+      const changedDirsHeader = req.headers['x-forest-changed-dirs'];
+      let targetComponents = null;
+
+      if (changedDirsHeader) {
+        targetComponents = changedDirsHeader.split(',').map(d => d.trim()).filter(d => d.length > 0);
+      }
+
       performReload(targetComponents).catch(err => console.error("[sync] Async reload failed:", err));
 
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -594,14 +613,14 @@ const server = createServer(async (req, res) => {
           socketPath: component.socketPath,
           pid: component.proc.pid,
           uptime_ms: componentUptime,
-          uptime_human: formatUptime(componentUptime)
+          uptime_human: `${Math.floor(componentUptime / 60000)}m ${Math.floor((componentUptime % 60000) / 1000)}s`
         };
       }
 
       const status = {
         status: "healthy",
         uptime: uptime,
-        uptime_human: formatUptime(uptime),
+        uptime_human: `${Math.floor(uptime / 60000)}m ${Math.floor((uptime % 60000) / 1000)}s`,
         port: PORT,
         components: componentInfo,
         component_count: components.size,
@@ -646,11 +665,18 @@ async function performReload(targetComponents = null) {
   console.log(`[sync] 🔄 Performing reload${targetMsg}...`);
 
   try {
-    const newFolders = new Set(await discoverComponents());
+    const entries = await readdir(ROOT, { withFileTypes: true });
+    const newFolders = new Set();
 
-    for (const name of newFolders) {
-      if (!targetComponents || targetComponents.includes(name)) {
-        await swapComponent(name);
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
+        if (existsSync(join(ROOT, entry.name, "index.js"))) {
+          newFolders.add(entry.name);
+
+          if (!targetComponents || targetComponents.includes(entry.name)) {
+            await swapComponent(entry.name);
+          }
+        }
       }
     }
 
@@ -691,26 +717,27 @@ async function ensureGitHook() {
 
   const hookPath = join(hooksDir, 'post-receive');
   const hookContent = `#!/bin/sh
+# Forest Git Hook - Dynamically generated by index.js
 while read oldrev newrev refname; do
-  [ "$newrev" = "0000000000000000000000000000000000000000" ] && continue
-  [ "$refname" != "refs/heads/main" ] && [ "$refname" != "refs/heads/master" ] && continue
-  if [ "$oldrev" = "0000000000000000000000000000000000000000" ]; then
-    curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
-    continue
-  fi
-  if git diff --name-only $oldrev $newrev | grep -q "^index.js$"; then
-    echo "[git-forest] Core updated. Triggering full container restart."
-    kill -TERM 1
-    exit 0
-  fi
-  CHANGED_DIRS=$(git diff --name-only $oldrev $newrev | grep -v "^index.js$" | grep -v "^public/" | grep -v "^\\.env" | sed 's|/.*||' | sort -u | tr '\\n' ',' | sed 's/,$//')
-  if [ -n "$CHANGED_DIRS" ]; then
-    echo "[git-forest] Targeted reload for: $CHANGED_DIRS"
-    curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" -H "x-forest-changed-dirs: $CHANGED_DIRS" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
-  else
-    echo "[git-forest] No specific component changes detected. Triggering full reload."
-    curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
-  fi
+    if [ "$newrev" = "0000000000000000000000000000000000000000" ]; then continue; fi
+    if [ "$refname" != "refs/heads/main" ] && [ "$refname" != "refs/heads/master" ]; then continue; fi
+    if [ "$oldrev" = "0000000000000000000000000000000000000000" ]; then
+        curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
+        continue
+    fi
+    if git diff --name-only $oldrev $newrev | grep -q "^index.js$"; then
+        echo "[git-forest] Core updated. Triggering full container restart."
+        kill -TERM 1
+        exit 0
+    fi
+    CHANGED_DIRS=$(git diff --name-only $oldrev $newrev | grep -v "^index.js$" | grep -v "^public/" | grep -v "^\\.env" | sed 's|/.*||' | sort -u | tr '\\n' ',' | sed 's/,$//')
+    if [ -n "$CHANGED_DIRS" ]; then
+        echo "[git-forest] Targeted reload for: $CHANGED_DIRS"
+        curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" -H "x-forest-changed-dirs: $CHANGED_DIRS" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
+    else
+        echo "[git-forest] No specific component changes detected. Triggering full reload."
+        curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
+    fi
 done
 `;
 
@@ -770,7 +797,8 @@ function setupWebSocketUpgrade() {
   server.on('upgrade', (req, socket, head) => {
     try {
       const internalToken = req.headers['x-forest-token'];
-      const isInternalCall = internalToken && isValidToken(internalToken);
+      const isReload = internalToken && (internalToken === RELOAD_TOKEN || (GIT_SECRET && timingSafeEqual(Buffer.from(internalToken, 'utf8'), Buffer.from(GIT_SECRET, 'utf8'))));
+      const isInternalCall = isReload;
 
       if (!isInternalCall) {
         delete req.headers['x-forest-device-id'];
@@ -778,8 +806,6 @@ function setupWebSocketUpgrade() {
         delete req.headers['x-forest-user-id'];
         processIdentity(req, null);
         if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
-      } else if (req.headers['x-forest-device-id']) {
-        req.forestDeviceId = req.headers['x-forest-device-id'];
       }
 
       const url = new URL(req.url, "http://localhost");
@@ -799,15 +825,15 @@ function setupWebSocketUpgrade() {
         const strippedPath = path.slice(segment.length + 1) || '/';
         const fullPath = strippedPath + url.search;
 
-        let httpRequest = `${req.method} ${fullPath} HTTP / 1.1\r\n`;
+        let httpRequest = `${req.method} ${fullPath} HTTP/1.1\r\n`;
         for (const [key, value] of Object.entries(req.headers)) {
           if (Array.isArray(value)) {
-            for (const v of value) httpRequest += `${key}: ${v} \r\n`;
+            for (const v of value) httpRequest += `${key}: ${v}\r\n`;
           } else {
-            httpRequest += `${key}: ${value} \r\n`;
+            httpRequest += `${key}: ${value}\r\n`;
           }
         }
-        if (req.forestDeviceId) httpRequest += 'x-forest-device-id: ' + `${req.forestDeviceId} \r\n`;
+        if (req.forestDeviceId) httpRequest += `x-forest-device-id: ${req.forestDeviceId}\r\n`;
         httpRequest += '\r\n';
 
         componentSocket.write(httpRequest);
@@ -818,7 +844,7 @@ function setupWebSocketUpgrade() {
       });
 
       componentSocket.on('error', (err) => {
-        console.error(`[ws] Component socket error: `, err.code, err.message);
+        console.error(`[ws] Component socket error:`, err.code, err.message);
         if (!socket.destroyed) {
           socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
           socket.destroy();
@@ -826,7 +852,7 @@ function setupWebSocketUpgrade() {
       });
 
       socket.on('error', (err) => {
-        console.error(`[ws] Client socket error: `, err.code, err.message);
+        console.error(`[ws] Client socket error:`, err.code, err.message);
         componentSocket.destroy();
       });
 
@@ -851,7 +877,10 @@ function setupWebSocketUpgrade() {
 async function boot() {
   await healGitState();
 
-  await Promise.all(['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'].map(l => safeUnlink(join(ROOT, l))));
+  const lockFiles = ['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'];
+  for (const lock of lockFiles) {
+    await unlink(join(ROOT, lock)).catch(() => { });
+  }
 
   if (!existsSync(join(ROOT, '.git'))) {
     console.log('[boot] 🌱 No Git repository found.');
@@ -872,12 +901,15 @@ async function boot() {
   await ensureGitHook();
   console.log('[boot] 🪝 Git post-receive hook synced with current reload token.');
 
-  for (const name of await discoverComponents()) {
-    await swapComponent(name);
+  const entries = await readdir(ROOT, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
+      if (existsSync(join(ROOT, entry.name, "index.js"))) await swapComponent(entry.name);
+    }
   }
 
   if (GIT_BACKUP_URL) {
-    console.log(`[backup] 🔄 Git backup enabled.Syncing every ${BACKUP_INTERVAL_MS / 60000} minutes.`);
+    console.log(`[backup] 🔄 Git backup enabled. Syncing every ${BACKUP_INTERVAL_MS / 60000} minutes.`);
     setTimeout(syncToBackup, BACKUP_INITIAL_DELAY_MS);
     setInterval(syncToBackup, BACKUP_INTERVAL_MS);
   }
