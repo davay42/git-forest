@@ -704,10 +704,13 @@ while read oldrev newrev refname; do
     exit 0
   fi
   CHANGED_DIRS=$(git diff --name-only $oldrev $newrev | grep -v "^index.js$" | grep -v "^public/" | grep -v "^\\.env" | sed 's|/.*||' | sort -u | tr '\\n' ',' | sed 's/,$//')
-  [ -n "$CHANGED_DIRS" ] && MSG="Targeted reload for: $CHANGED_DIRS" || MSG="No specific component changes detected. Triggering full reload."
-  echo "[git-forest] $MSG"
-  curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" ${CHANGED_DIRS:+-H "x-forest-changed-dirs: $CHANGED_DIRS"
-} http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
+  if [ -n "$CHANGED_DIRS" ]; then
+    echo "[git-forest] Targeted reload for: $CHANGED_DIRS"
+    curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" -H "x-forest-changed-dirs: $CHANGED_DIRS" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
+  else
+    echo "[git-forest] No specific component changes detected. Triggering full reload."
+    curl -s -X POST -H "x-forest-token: ${RELOAD_TOKEN}" http://localhost:\${FOREST_CORE_PORT:-3000}/_forest/reload > /dev/null 2>&1 || true
+  fi
 done
 `;
 
@@ -796,15 +799,15 @@ function setupWebSocketUpgrade() {
         const strippedPath = path.slice(segment.length + 1) || '/';
         const fullPath = strippedPath + url.search;
 
-        let httpRequest = `${ req.method } ${ fullPath } HTTP / 1.1\r\n`;
+        let httpRequest = `${req.method} ${fullPath} HTTP / 1.1\r\n`;
         for (const [key, value] of Object.entries(req.headers)) {
           if (Array.isArray(value)) {
-            for (const v of value) httpRequest += `${ key }: ${ v } \r\n`;
+            for (const v of value) httpRequest += `${key}: ${v} \r\n`;
           } else {
-            httpRequest += `${ key }: ${ value } \r\n`;
+            httpRequest += `${key}: ${value} \r\n`;
           }
         }
-        if (req.forestDeviceId) httpRequest += 'x-forest-device-id: ' + `${ req.forestDeviceId } \r\n`;
+        if (req.forestDeviceId) httpRequest += 'x-forest-device-id: ' + `${req.forestDeviceId} \r\n`;
         httpRequest += '\r\n';
 
         componentSocket.write(httpRequest);
@@ -874,20 +877,20 @@ async function boot() {
   }
 
   if (GIT_BACKUP_URL) {
-    console.log(`[backup] 🔄 Git backup enabled.Syncing every ${ BACKUP_INTERVAL_MS / 60000 } minutes.`);
+    console.log(`[backup] 🔄 Git backup enabled.Syncing every ${BACKUP_INTERVAL_MS / 60000} minutes.`);
     setTimeout(syncToBackup, BACKUP_INITIAL_DELAY_MS);
     setInterval(syncToBackup, BACKUP_INTERVAL_MS);
   }
 
   server.listen(PORT, () => {
     console.log(`[ready] http://localhost:${PORT} | components: ${[...components.keys()].join(", ") || "none"}`);
-console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
-console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
-console.log(`[breath] 🌬️ Autonomic Git management started (${BREATH_MS}ms breath, ${SLEEP_AFTER_MS}ms sleep)`);
+    console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
+    console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
+    console.log(`[breath] 🌬️ Autonomic Git management started (${BREATH_MS}ms breath, ${SLEEP_AFTER_MS}ms sleep)`);
   });
 
-setupWebSocketUpgrade();
-startBreathing();
+  setupWebSocketUpgrade();
+  startBreathing();
 }
 
 boot();
