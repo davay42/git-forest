@@ -39,6 +39,11 @@ const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'forest_session';
 const MAX_AGE_DAYS = envInt('AUTH_MAX_AGE_DAYS', 90);
 const RENEWAL_WINDOW_DAYS = envInt('AUTH_RENEWAL_WINDOW_MS', 30);
 
+// ─── BREATHING CONFIGURATION ───────────────────────────────────────────────
+const BREATH_MS = envInt('BREATH_MS', 5000);              // Check for changes every 5s
+const SLEEP_AFTER_MS = envInt('SLEEP_AFTER_MS', 300000);  // 5 min quiet → sleep
+const DEEP_SLEEP_AFTER_MS = envInt('DEEP_SLEEP_AFTER_MS', 3600000); // 1 hour quiet → deep sleep
+
 // ─── GIT HTTP BACKEND DISCOVERY ────────────────────────────────────────────
 function discoverGitBackend() {
   if (process.env.GIT_HTTP_BACKEND) return process.env.GIT_HTTP_BACKEND;
@@ -58,43 +63,120 @@ const GIT_HTTP_BACKEND = discoverGitBackend();
 const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript", ".json": "application/json", ".md": "text/markdown", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon" };
 const proxyAgent = new Agent({ keepAlive: true, maxSockets: PROXY_MAX_SOCKETS });
 const components = new Map();
-const deviceUserMap = new Map(); // deviceId → userId
+const deviceUserMap = new Map();
 let isReloading = false;
 const startTime = Date.now();
 
+// ─── BREATHING STATE ────────────────────────────────────────────────────────
+let lastActivity = Date.now();
+let sleepState = 'awake'; // 'awake' | 'sleeping' | 'deep'
+let breathCount = 0;
+let commitCount = 0;
 
-// ─── GIT COMMIT QUEUE (MUTEX) ──────────────────────────────────────────────
-let gitQueue = Promise.resolve();
+// ─── AUTONOMIC GIT MANAGEMENT (BREATHING) ──────────────────────────────────
+function startBreathing() {
+  setInterval(async () => {
+    const quiet = Date.now() - lastActivity;
 
-async function queueGitCommit(files, message) {
-  const currentQueue = gitQueue;
-  let resolveTask;
-  const taskPromise = new Promise(r => resolveTask = r);
-  gitQueue = taskPromise;
+    try {
+      const { stdout: dirty } = await exec('git', ['status', '--porcelain'], { cwd: ROOT });
 
-  try {
-    await currentQueue.catch(() => { });
-    const fileList = Array.isArray(files) ? files : [files];
-    const addArgs = fileList.length > 0 ? ['add', ...fileList] : ['add', '.'];
+      if (dirty.trim()) {
+        // Awake and breathing: commit changes
+        sleepState = 'awake';
+        lastActivity = Date.now();
+        breathCount++;
 
-    await exec('git', addArgs, { cwd: ROOT });
-    const { stdout } = await exec('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
+        await exec('git', ['add', '-A'], { cwd: ROOT });
+        const { stdout: staged } = await exec('git', ['diff', '--staged', '--name-only'], { cwd: ROOT });
+        const files = staged.trim().split('\n').filter(Boolean);
+        if (files.length === 0) return;
 
-    if (!stdout.trim()) {
-      const result = { status: 'ok', message: 'No changes to commit' };
-      resolveTask(result);
-      return result;
+        const message = describeBreath(files);
+        await exec('git', ['commit', '-m', message], { cwd: ROOT });
+        commitCount++;
+        console.log(`[breath] 🌬️ ${message}`);
+      }
+      else if (quiet > DEEP_SLEEP_AFTER_MS && sleepState !== 'deep') {
+        sleepState = 'deep';
+        await introspect(true);
+      }
+      else if (quiet > SLEEP_AFTER_MS && sleepState === 'awake') {
+        sleepState = 'sleeping';
+        await introspect(false);
+      }
+    } catch (err) {
+      console.error('[breath] Error:', err.message);
     }
+  }, BREATH_MS);
+}
 
-    await exec('git', ['commit', '-m', message || 'chore: auto-commit'], { cwd: ROOT });
-    const result = { status: 'ok', message: 'Committed successfully' };
-    resolveTask(result);
-    return result;
-  } catch (err) {
-    console.error('[git-queue] Error:', err.message);
-    const result = { status: 'error', message: err.message };
-    resolveTask(result);
-    return result;
+function describeBreath(files) {
+  const users = new Set();
+  const components = new Set();
+  const codeChanges = [];
+  const knowledgeChanges = [];
+
+  for (const f of files) {
+    const parts = f.split('/');
+    if (parts[0] === 'users' && parts.length >= 2) {
+      users.add(parts[1]);
+      if (parts.length >= 3 && parts[2] !== 'index.md') {
+        components.add(parts[2].replace('.md', ''));
+      }
+    } else if (parts.length >= 2 && parts[1] === 'index.js') {
+      codeChanges.push(parts[0]);
+    } else if (parts[0] !== 'public' && parts[0] !== '.gitignore' && parts[0] !== 'index.js') {
+      knowledgeChanges.push(parts[0]);
+    }
+  }
+
+  const segments = [];
+  if (codeChanges.length > 0) segments.push(`deploy ${codeChanges.join('+')}`);
+  if (knowledgeChanges.length > 0) segments.push(`${knowledgeChanges.join('+')} knowledge`);
+  if (users.size > 0) {
+    const compList = [...components].join('+');
+    if (users.size === 1) segments.push(`user ${[...users][0]}${compList ? ` ${compList}` : ''}`);
+    else segments.push(`${users.size} users${compList ? ` ${compList}` : ''}`);
+  }
+
+  if (segments.length === 0) return `update ${files.length} file(s)`;
+  return segments.join(' · ');
+}
+
+async function introspect(isDeep) {
+  const active = [...components.keys()].join(', ') || 'none';
+  const uptimeMin = Math.floor((Date.now() - startTime) / 60000);
+  const state = isDeep ? '🌑 Deep sleep' : '😴 Sleep';
+
+  console.log(`[introspect] ${state} | Uptime: ${uptimeMin}m | Breaths: ${breathCount} | Commits: ${commitCount} | Components: ${active}`);
+
+  // Consolidate any orphaned changes
+  try {
+    const { stdout } = await exec('git', ['status', '--porcelain'], { cwd: ROOT });
+    if (stdout.trim()) {
+      await exec('git', ['add', '-A'], { cwd: ROOT });
+      await exec('git', ['commit', '-m', 'chore: sleep consolidation'], { cwd: ROOT });
+      console.log('[introspect] 🧹 Consolidated orphaned changes');
+    }
+  } catch { }
+
+  // Optimize repository
+  await exec('git', ['gc', '--auto'], { cwd: ROOT }).catch(() => { });
+
+  // Sync backup
+  if (GIT_BACKUP_URL) await syncToBackup();
+
+  if (isDeep) {
+    // Deep sleep maintenance: prune reflog, repack
+    await exec('git', ['reflog', 'expire', '--expire=30.days.ago', '--all'], { cwd: ROOT }).catch(() => { });
+    await exec('git', ['repack', '-a', '-d'], { cwd: ROOT }).catch(() => { });
+    console.log('[introspect] 🧹 Deep maintenance complete');
+  }
+
+  for (const [name, c] of components) {
+    const up = Math.floor((Date.now() - c.startTime) / 60000);
+    console.log(`[introspect]   /${name}: ${up}m`);
   }
 }
 
@@ -228,9 +310,8 @@ async function swapComponent(name) {
         deviceUserMap.set(msg.deviceId, msg.userId);
       } else if (msg && msg.type === 'device-unmap') {
         deviceUserMap.delete(msg.deviceId);
-      } else if (msg && msg.type === 'commit') {
-        await queueGitCommit(msg.files || [], msg.message || `chore: update ${name}`);
       }
+      // Note: 'commit' messages are no longer handled. The kernel breathes automatically.
     });
     newProc.once('exit', (code) => { exitedEarly = true; done(); });
     setTimeout(done, COMPONENT_READY_TIMEOUT_MS);
@@ -411,6 +492,8 @@ function proxyToComponent(req, res, segment, isSubdomain = false) {
 
   const headers = { ...req.headers };
   if (req.forestDeviceId) headers['x-forest-device-id'] = req.forestDeviceId;
+  const userId = deviceUserMap.get(req.forestDeviceId);
+  if (userId) headers['x-forest-user-id'] = userId;
 
   const proxyReq = request({
     agent: proxyAgent,
@@ -473,6 +556,7 @@ const server = createServer(async (req, res) => {
     if (!isInternalCall) {
       delete req.headers['x-forest-device-id'];
       delete req.headers['x-forest-token'];
+      delete req.headers['x-forest-user-id'];
       processIdentity(req, res);
       if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
     } else {
@@ -493,13 +577,11 @@ const server = createServer(async (req, res) => {
       return proxyToComponent(req, res, subdomain, true);
     }
 
-    // Internal API: Health check
     if (path === "/_forest/health" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/plain" });
       return res.end("OK");
     }
 
-    // Internal API: Reload endpoint (Triggered by Git Hook)
     if (path === "/_forest/reload" && req.method === "POST") {
       const token = req.headers['x-forest-token'];
       const isValid = (token === RELOAD_TOKEN) || (GIT_SECRET && timingSafeEqual(Buffer.from(token, 'utf8'), Buffer.from(GIT_SECRET, 'utf8')));
@@ -522,7 +604,6 @@ const server = createServer(async (req, res) => {
       return res.end("Reload triggered");
     }
 
-    // Internal API: Status endpoint
     if (path === "/_forest/status" && req.method === "GET") {
       const uptime = Date.now() - startTime;
       const componentInfo = {};
@@ -546,17 +627,18 @@ const server = createServer(async (req, res) => {
         git_auth_enabled: !!GIT_SECRET,
         proxy_trust_enabled: TRUST_PROXY,
         git_http_backend: GIT_HTTP_BACKEND,
-        is_reloading: isReloading
+        is_reloading: isReloading,
+        breath_state: sleepState,
+        breath_count: breathCount,
+        commit_count: commitCount
       };
 
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify(status, null, 2));
     }
 
-    // Git HTTP backend
     if (path.startsWith("/git")) return handleGit(req, res, ip);
 
-    // Component routing
     const segment = path.split("/")[1];
     if (segment && components.has(segment)) {
       if (path === `/${segment}`) {
@@ -566,7 +648,6 @@ const server = createServer(async (req, res) => {
       return proxyToComponent(req, res, segment);
     }
 
-    // Static files
     await serveStatic(req, res);
   } catch (err) {
     console.error("[core] Unhandled error:", err);
@@ -722,6 +803,7 @@ function setupWebSocketUpgrade() {
       if (!isInternalCall) {
         delete req.headers['x-forest-device-id'];
         delete req.headers['x-forest-token'];
+        delete req.headers['x-forest-user-id'];
         processIdentity(req, null);
         if (req.forestDeviceId) req.headers['x-forest-device-id'] = req.forestDeviceId;
       }
@@ -836,9 +918,11 @@ async function boot() {
     console.log(`[ready] http://localhost:${PORT} | components: ${[...components.keys()].join(", ") || "none"}`);
     console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
     console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
+    console.log(`[breath] 🌬️ Autonomic Git management started (${BREATH_MS}ms breath, ${SLEEP_AFTER_MS}ms sleep)`);
   });
 
   setupWebSocketUpgrade();
+  startBreathing();
 }
 
 boot();
