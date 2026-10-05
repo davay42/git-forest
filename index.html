@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>git-forest: Sovereign Agentic Runtime</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    html {
+      scroll-behavior: smooth;
+      overscroll-behavior: none;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      line-height: 1.6;
+      color: #2d3748;
+      background: #fafaf9
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 100%);
+      color: #f0fdf4;
+      padding: 6rem 2rem;
+      text-align: center;
+      border-radius: 0 0 2rem 2rem
+    }
+
+    .hero h1 {
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      margin-bottom: 1rem;
+      font-weight: 800;
+      letter-spacing: -0.02em
+    }
+
+    .hero .subtitle {
+      font-size: clamp(1.1rem, 2.5vw, 1.5rem);
+      opacity: 0.95;
+      margin-bottom: 2.5rem;
+      font-weight: 300
+    }
+
+    .hero code {
+      background: rgba(255, 255, 255, 0.15);
+      padding: 0.4rem 0.8rem;
+      border-radius: 6px;
+      font-size: 1rem;
+      display: inline-block;
+      margin-top: 1rem
+    }
+
+    section {
+      padding: 4rem;
+    }
+
+    h2 {
+      font-size: 2.2rem;
+      margin-bottom: 1.5rem;
+      color: #1a202c;
+      font-weight: 700;
+      letter-spacing: -0.01em
+    }
+
+    h3 {
+      font-size: 1.5rem;
+      margin: 2rem 0 1rem;
+      color: #2d3748;
+      font-weight: 600
+    }
+
+    p {
+      margin-bottom: 1.2rem;
+      color: #4a5568
+    }
+
+    a {
+      color: #047857;
+      text-decoration: none;
+      font-weight: 500
+    }
+
+    a:hover {
+      text-decoration: underline
+    }
+
+    .badges {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 2rem
+    }
+
+    .badge {
+      background: #ecfdf5;
+      color: #065f46;
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border: 2px solid #a7f3d0
+    }
+
+    .philosophy {
+      background: #f0fdf4
+    }
+
+    .philosophy ul {
+      list-style: none;
+      margin: 1.5rem 0
+    }
+
+    .philosophy li {
+      padding: 0.8rem 0 0.8rem 2.5rem;
+      position: relative;
+      color: #4a5568
+    }
+
+    .philosophy li::before {
+      position: absolute;
+      left: 0;
+      font-size: 1.3rem
+    }
+
+    .philosophy li:nth-child(1)::before {
+      content: "🌱"
+    }
+
+    .philosophy li:nth-child(2)::before {
+      content: "📄"
+    }
+
+    .philosophy li:nth-child(3)::before {
+      content: "🌳"
+    }
+
+    .philosophy li:nth-child(4)::before {
+      content: "🍄"
+    }
+
+    .philosophy li:nth-child(5)::before {
+      content: "⏰"
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin: 2rem 0
+    }
+
+    .card {
+      background: #fff;
+      padding: 1.8rem;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+      border: 1px solid #e5e7eb;
+      transition: transform 0.2s, box-shadow 0.2s
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1)
+    }
+
+    .card h3 {
+      margin-top: 0
+    }
+
+    .code-block {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 1.5rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 1.5rem 0;
+      font-family: 'SF Mono', Consolas, monospace;
+      font-size: 0.9rem;
+      line-height: 1.7;
+      border: 2px solid #334155;
+      white-space: pre;
+      word-wrap: normal;
+      word-break: normal;
+    }
+
+    .code-block .comment {
+      color: #64748b
+    }
+
+    .code-block .keyword {
+      color: #7dd3fc
+    }
+
+    .code-block .string {
+      color: #86efac
+    }
+
+    .use-cases {
+      background: #ecfdf5
+    }
+
+    .use-cases .grid {
+      margin-top: 2rem
+    }
+
+    .deploy {
+      background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+      border-radius: 2rem;
+      padding: 3rem 2rem
+    }
+
+    .deploy h2 {
+      color: #78350f
+    }
+
+    .deploy .code-block {
+      background: #78350f;
+      border-color: #92400e
+    }
+
+    footer {
+      background: #064e3b;
+      color: #f0fdf4;
+      text-align: center;
+      padding: 3rem 2rem;
+      margin-top: 4rem
+    }
+
+    footer p {
+      opacity: 0.9
+    }
+
+    .layer {
+      display: flex;
+      gap: 1.5rem;
+      margin: 1.5rem 0;
+      align-items: flex-start
+    }
+
+    .layer-num {
+      background: #065f46;
+      color: #f0fdf4;
+      width: 3rem;
+      height: 3rem;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.2rem;
+      flex-shrink: 0
+    }
+
+    .layer-content h4 {
+      font-size: 1.2rem;
+      margin-bottom: 0.5rem;
+      color: #1a202c
+    }
+
+    .layer-content p {
+      margin: 0;
+      font-size: 0.95rem
+    }
+
+    @media(max-width:768px) {
+      .hero {
+        padding: 4rem 1.5rem
+      }
+
+      .container {
+        padding: 1.5rem 1rem
+      }
+
+      section {
+        padding: 3rem 0
+      }
+
+      .layer {
+        flex-direction: column
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="hero">
+    <h1>🌲 git-forest</h1>
+    <div class="subtitle">A zero-dependency Node.js runtime where the filesystem is the router, directories are
+      sovereign components, and Git is the arrow of time.</div>
+    <code>npx @davay/git-forest</code>
+    <div class="badges">
+      <div class="badge">v1.1.1</div>
+      <div class="badge">Zero Dependencies</div>
+      <div class="badge">Sovereign by Design</div>
+    </div>
+  </div>
+
+  <div class="container">
+
+    <section>
+      <h2>The Epistemological Inversion</h2>
+      <p>Modern software engineering suffers from the "Database Illusion" and "Platform Dependency." We rent
+        infrastructure, configure abstractions, and deploy through pipelines we do not own. <strong>git-forest</strong>
+        discards these metaphors. It is not a framework; it is a realignment of computational ontology.</p>
+
+      <div class="philosophy">
+        <ul>
+          <li><strong>JavaScript is the Subject (The Will):</strong> The continuous, persistent process holding logic,
+            state transitions, and decision-making capacity.</li>
+          <li><strong>HTML/CSS is the Phenomenon (The Projection):</strong> The ephemeral, disposable shape the agent
+            takes to communicate with the human visual cortex.</li>
+          <li><strong>HTTP is the Membrane:</strong> The strict, impermeable boundary of the component's sovereignty.
+          </li>
+          <li><strong>The Filesystem is the Noumenon (Shared Truth):</strong> The unabstracted reality. Code, state, and
+            data occupy the exact same physical space, readable as plain text.</li>
+          <li><strong>Git is the Teleology:</strong> The arrow of time, the append-only memory, and the decentralized
+            engine of consensus.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <h2>How It Works: The Nine Layers</h2>
+      <p>git-forest distills the entire web stack into nine irreducible primitives. No databases. No frameworks. No
+        orchestration. Just Node.js, Git, and the filesystem.</p>
+
+      <div class="layer">
+        <div class="layer-num">1</div>
+        <div class="layer-content">
+          <h4>The Membrane</h4>
+          <p>HTTP routing via raw TCP proxy. No Express. No middleware. Just string matching and Unix sockets.</p>
+        </div>
+      </div>
+
+      <div class="layer">
+        <div class="layer-num">2</div>
+        <div class="layer-content">
+          <h4>The Process Tree</h4>
+          <p>Each component is a child process. Isolation via OS boundaries. Hot-swap on Git push. Zero-downtime
+            deployment.</p>
+        </div>
+      </div>
+
+      <div class="layer">
+        <div class="layer-num">3</div>
+        <div class="layer-content">
+          <h4>Identity (FIP)</h4>
+          <p>Device-first authentication via HMAC-signed cookies. Users are constellations of devices. Recovery is
+            peer-to-peer trust.</p>
+        </div>
+      </div>
+
+      <div class="layer">
+        <div class="layer-num">4</div>
+        <div class="layer-content">
+          <h4>State (The Soil)</h4>
+          <p>The filesystem is the database. MD-LD (Markdown + Linked Data) provides semantic structure. Every file is
+            plain text, human-readable.</p>
+        </div>
+      </div>
+
+      <div class="layer">
+        <div class="layer-num">5</div>
+        <div class="layer-content">
+          <h4>Time (Git)</h4>
+          <p>Autonomic breathing commits changes every 5 seconds. Sleep consolidation during quiet periods. Deep sleep
+            maintenance for optimization.</p>
+        </div>
+      </div>
+
+      <div class="layer">
+        <div class="layer-num">6</div>
+        <div class="layer-content">
+          <h4>Coordination (The Mycelium)</h4>
+          <p>IPC-based device mapping. Components never call each other over HTTP. The kernel maintains shared state in
+            memory.</p>
+        </div>
+      </div>
+
+      <div class="layer">
+        <div class="layer-num">7</div>
+        <div class="layer-content">
+          <h4>Security</h4>
+          <p>Header stripping, timing-safe comparisons, path validation. No third-party services. Pure cryptographic
+            paranoia.</p>
+        </div>
+      </div>
+
+      <div class="layer">
+        <div class="layer-num">8</div>
+        <div class="layer-content">
+          <h4>Autonomy</h4>
+          <p>Components can run as daemons. The kernel breathes, sleeps, and tends the forest without human
+            intervention.</p>
+        </div>
+      </div>
+
+      <div class="layer">
+        <div class="layer-num">9</div>
+        <div class="layer-content">
+          <h4>Deployment</h4>
+          <p>Push-to-deploy via Git. The post-receive hook inspects diffs and triggers targeted reloads. No CI/CD
+            pipeline needed.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Quick Start</h2>
+      <p>Requires only Node.js ≥ 22 and Git. Zero npm dependencies.</p>
+
+      <div class="code-block">
+        <span class="comment"># Create a new forest</span>
+        mkdir my-forest && cd my-forest
+        npx @davay/git-forest
+
+        <span class="comment"># That's it. Git is initialized, server is running on :3000</span>
+        <span class="comment"># Create a component:</span>
+        mkdir hello && cd hello
+        cat > index.js &lt;&lt; 'EOF'
+        import { createServer } from 'node:http';
+        const server = createServer((req, res) => {
+        res.end('🌲 Hello from the forest!');
+        });
+        server.listen(process.env.SOCKET_PATH, () => {
+        process.send('ready');
+        });
+        EOF
+
+        <span class="comment"># Push to deploy</span>
+        git add .
+        git commit -m "feat: hello component"
+        git push <span class="comment"># Triggers hot-reload in &lt;3s</span>
+      </div>
+    </section>
+
+    <section class="deploy">
+      <h2>🐳 Docker Deployment</h2>
+      <p>Run as a single stateful container with a persistent volume. Perfect for VPS hosting, Coolify, CapRover, or any
+        container orchestrator.</p>
+
+      <div class="code-block">
+        <span class="comment"># Dockerfile</span>
+        FROM node:22-alpine
+        RUN apk add --no-cache git git-daemon curl
+
+        WORKDIR /opt/git-forest-seed
+        COPY index.js .
+        COPY .gitignore .
+
+        WORKDIR /app
+        EXPOSE 3000
+
+        ENTRYPOINT ["sh", "-c", "\
+        if [ ! -f 'index.js' ]; then \
+        echo '[docker] 🌱 Empty volume detected. Seeding core files...'; \
+        cp /opt/git-forest-seed/* . 2>/dev/null || true; \
+        fi; \
+        exec node index.js \
+        "]
+
+        <span class="comment"># Build and run</span>
+        docker build -t my-forest .
+        docker run -d -p 3000:3000 -v forest-data:/app my-forest
+      </div>
+    </section>
+
+    <section>
+      <h2>Component Authoring</h2>
+      <p>A component is any root-level directory containing an <code>index.js</code>. It is an autonomous agent—a tree
+        in the forest.</p>
+
+      <div class="code-block">
+        import { createServer } from 'node:http';
+        import { appendFile } from 'node:fs/promises';
+        import { join } from 'node:path';
+
+        const COMPONENT_DIR = process.env.COMPONENT_DIR;
+        const ROOT = join(COMPONENT_DIR, '..');
+
+        const server = createServer(async (req, res) => {
+        <span class="comment">// Read identity from the mycelium</span>
+        const userId = req.headers['x-forest-user-id'];
+        if (!userId) {
+        res.writeHead(401);
+        return res.end('Authentication required');
+        }
+
+        <span class="comment">// Write to the soil (filesystem)</span>
+        await appendFile(
+        join(ROOT, 'payments', 'users', `${userId}.md`),
+        '\n## New entry\n'
+        );
+
+        <span class="comment">// That's it. The kernel breathes the change into Git.</span>
+        res.end('Saved.');
+        });
+
+        server.listen(process.env.SOCKET_PATH, () => {
+        process.send('ready'); <span class="comment">// Signal the kernel</span>
+        });
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h3>🌐 The Membrane</h3>
+          <p>The kernel strips the component prefix. <code>/payments/checkout</code> arrives at your component as
+            <code>/checkout</code>. Use relative paths in HTML.
+          </p>
+        </div>
+        <div class="card">
+          <h3>⚡ Zero-Downtime</h3>
+          <p>Signal readiness via <code>process.send('ready')</code>. The kernel hot-swaps sockets. If your code crashes
+            on boot, the old version stays live.</p>
+        </div>
+        <div class="card">
+          <h3>📝 Just Write Files</h3>
+          <p>No Git commands. No commit requests. The kernel breathes automatically. Your component is a pure filesystem
+            operator.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Identity Protocol (FIP)</h2>
+      <p>Modern identity is a centralized ledger of PII. git-forest treats identity as a <strong>cryptographic proof of
+          device continuity</strong>.</p>
+
+      <div class="grid">
+        <div class="card">
+          <h3>🔐 Device-First</h3>
+          <p>The kernel issues an <code>HttpOnly</code> cookie containing a signed <code>deviceId</code>. No email. No
+            password. Just math.</p>
+        </div>
+        <div class="card">
+          <h3>🌳 Users as Constellations</h3>
+          <p>A user owns a set of devices. Any device can generate recovery links for new devices. No third-party auth
+            service needed.</p>
+        </div>
+        <div class="card">
+          <h3>🍄 The Mycelium</h3>
+          <p>The kernel maintains an in-memory map of <code>deviceId → userId</code>, fed by the <code>/user</code>
+            component via IPC. Zero HTTP overhead.</p>
+        </div>
+      </div>
+
+      <div class="code-block">
+        <span class="comment">// In any component, read identity from headers</span>
+        const userId = req.headers['x-forest-user-id'];
+        if (!userId) return res.end('Please log in');
+
+        <span class="comment">// Read user state directly from the filesystem</span>
+        const { quads } = parse(await readFile(
+        join(ROOT, 'user', 'profiles', `${userId}.md`), 'utf8'
+        ));
+
+        <span class="comment">// No database queries. No session lookups. Just files.</span>
+      </div>
+    </section>
+
+    <section class="use-cases">
+      <h2>Use Cases</h2>
+      <p>Because the entire platform specification fits in roughly 4,000 tokens, modern LLM agents can read the README
+        and one-shot fully functional microservices in seconds. The cost of building highly specific, local software has
+        dropped to zero.</p>
+
+      <div class="grid">
+        <div class="card">
+          <h3>🌿 Sovereign Workflows</h3>
+          <p>Unlimited automation flows replacing n8n or Make.com. Each workflow is a component, versioned in Git, owned
+            entirely by you.</p>
+        </div>
+        <div class="card">
+          <h3>🤖 AI Agent Substrate</h3>
+          <p>Agents live as components, reading the filesystem, reasoning over semantic data, and growing their own
+            state in the shared soil.</p>
+        </div>
+        <div class="card">
+          <h3>🌐 The Transparent Tunnel</h3>
+          <p>A lightweight WebSocket proxy component that exposes your local forest to the public internet without ngrok
+            or Cloudflare Tunnel.</p>
+        </div>
+        <div class="card">
+          <h3>☁️ The Personal Cloud</h3>
+          <p>Polls, journals, webhooks, cron jobs, video streaming—each just a folder, versioned in Git, owned entirely
+            by you.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>The Forest Ontology</h2>
+      <p>Every byte in a git-forest belongs to one of three substances. The <code>.gitignore</code> file is not a
+        cleanup list; it is a declarative policy schema that defines the boundary between them.</p>
+
+      <div class="grid">
+        <div class="card">
+          <h3>📝 Code</h3>
+          <p><strong>The context.</strong> Logic that transforms inputs. Versioned. Example: <code>index.js</code>,
+            <code>public/styles.css</code>
+          </p>
+        </div>
+        <div class="card">
+          <h3>🌱 Knowledge</h3>
+          <p><strong>Data given context.</strong> Semantic, auditable. Versioned. Example:
+            <code>catalog/items.md</code>, <code>users/*/profile.md</code>
+          </p>
+        </div>
+        <div class="card">
+          <h3>🍂 Soil</h3>
+          <p><strong>Raw accumulation.</strong> The nutrients. Ephemeral. Example: <code>sessions/</code>,
+            <code>cache/</code>
+          </p>
+        </div>
+      </div>
+
+      <p><strong>The Rule:</strong> Anything not in <code>.gitignore</code> is committed to Git. Anything in
+        <code>.gitignore</code> is sovereign to the local container. The core flow is <em>photosynthesis</em>:
+        components absorb raw data (Soil), apply logic (Code), and elevate it into auditable history (Knowledge).
+      </p>
+    </section>
+
+  </div>
+
+  <footer>
+    <p><strong>🌲 Plant the seed. Watch the forest grow.</strong></p>
+    <p style="margin-top:1rem;opacity:0.8">
+      <a href="https://www.npmjs.com/package/@davay/git-forest" style="color:#a7f3d0">npm</a> •
+      <a href="https://github.com/davay42/git-forest" style="color:#a7f3d0">GitHub</a> •
+      <a href="https://chromatone.center" style="color:#a7f3d0">Chromatone</a>
+    </p>
+    <p style="margin-top:1.5rem;font-size:0.9rem;opacity:0.7">
+      You are not building software. You are planting a forest.
+    </p>
+  </footer>
+
+</body>
+
+</html>
