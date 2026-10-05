@@ -25,12 +25,6 @@ let totalNotifications = 0;
 let subscriptions = []; // { endpoint, keys, frequency, subscribedAt }
 const sseClients = new Set();
 
-async function commitToForest(files, message) {
-  if (process.send) {
-    process.send({ type: 'commit', files: Array.isArray(files) ? files : [files], message });
-  }
-}
-
 // ─── Knowledge: Report Document ────────────────────────────────────────
 async function loadReport() {
   try {
@@ -54,10 +48,6 @@ async function appendReport(notifiedCount) {
   const time = new Date().toISOString();
   const line = `| ${counter} | ${time} | ${notifiedCount} |\n`;
   await appendFile(REPORT_FILE, line);
-  await commitToForest(
-    [`${COMPONENT_NAME}/report.md`],
-    `knowledge: counter ${counter} (notification #${totalNotifications}, ${notifiedCount} recipients)`
-  );
 }
 
 // ─── Subscriptions ─────────────────────────────────────────────────────
