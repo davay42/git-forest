@@ -29,20 +29,6 @@ function broadcast(data) {
   for (const res of clients) res.write(payload);
 }
 
-async function commitToForest(files, message) {
-  if (process.send) {
-    process.send({ type: 'commit', files: Array.isArray(files) ? files : [files], message });
-  }
-}
-
-// 2. The Delayed Commit Engine (Git Audit)
-function scheduleCommit() {
-  if (commitTimer) clearTimeout(commitTimer);
-  commitTimer = setTimeout(async () => {
-    commitToForest([`${NAME}/counter.md`], `test: snapshot at ${clicks} clicks`);
-    commitTimer = null;
-  }, 60000); // 1 minute debounce for the Git commit
-}
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -99,10 +85,6 @@ const server = createServer(async (req, res) => {
     // Fire-and-forget the disk write to keep the HTTP response fast
     writeFile(STATE_FILE, md).catch(err => console.error(`[${NAME}] Disk write failed:`, err));
 
-    // C. DELAYED COMMIT (The Audit Trail)
-    // We reset the 1-minute timer. Git will only see a snapshot of the disk 
-    // after the user stops clicking for 1 minute.
-    scheduleCommit();
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true }));
