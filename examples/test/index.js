@@ -10,7 +10,6 @@ const TOKEN = process.env.FOREST_COMPONENT_TOKEN;
 const STATE_FILE = join(DIR, 'counter.md');
 
 let clicks = 0;
-let commitTimer = null;
 const clients = new Set();
 
 (async () => {
