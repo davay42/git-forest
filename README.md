@@ -224,7 +224,7 @@ These are fire-and-forget. The Core's map is a cache — if your component resta
 
 ## The Sovereign Ecosystem
 
-Because the entire platform specification fits in roughly 4,000 tokens, modern LLM agents can read this README and one-shot fully functional, 500-line community microservices in seconds. The cost of building highly specific, local software has dropped to zero.
+Because the entire platform specification fits in roughly 9,000 tokens, modern LLM agents can read this README and one-shot fully functional, 500-line community microservices in seconds. The cost of building highly specific, local software has dropped to zero.
 
 *   **Sovereign Workflows:** Unlimited automation flows, replacing n8n or Make.com.
 *   **AI Agent Substrate:** Agents live as components, reading the filesystem, reasoning over semantic data, and growing their own state in the shared soil.
