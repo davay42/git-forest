@@ -951,6 +951,14 @@ async function boot() {
   await ensureGitHook();
   console.log('[boot] 🪝 Git post-receive hook synced with current reload token.');
 
+  // Clean up any stale forest sockets from previous runs
+  const tmpFiles = await readdir('/tmp').catch(() => []);
+  for (const file of tmpFiles) {
+    if (file.startsWith('forest-') && file.endsWith('.sock')) {
+      await unlink(join('/tmp', file)).catch(() => { });
+    }
+  }
+
   // Load device-user map and watch for changes
   loadDeviceMap();
   watchDeviceMap();

@@ -26,7 +26,7 @@ Every byte in a git-forest belongs to one of three substances. The `.gitignore` 
 | :--- | :--- | :--- | :--- |
 | **Code** | The context. Logic that transforms inputs. | Versioned | `index.js`, `public/styles.css` |
 | **Knowledge** | Data given context. Semantic, auditable. | Versioned | `results.md`, `catalog/*.md` |
-| **Soil** | Raw accumulation. The nutrients. | Ephemeral | `votes.jsonl`, `sessions/` |
+| **Soil** | Raw accumulation. The nutrients. | Ephemeral | `votes.jsonl`, `sessions/`, `users.json` |
 
 **The Rule:** Anything not in `.gitignore` is committed to Git. Anything in `.gitignore` is sovereign to the local container. The core flow is *photosynthesis*: components absorb raw data (Soil), apply logic (Code), and elevate it into auditable history (Knowledge).
 
@@ -102,14 +102,15 @@ The Core strips the component prefix from the URL. `/poll/vote` arrives at the `
 **Crucial:** Always use relative paths in your HTML (`<form action="./vote">`). This ensures the component remains context-aware and portable across local, subdomain, and tunneled environments.
 
 ### 2. The Lifecycle (Zero-Downtime)
-Workers must listen on `process.env.SOCKET_PATH` and signal readiness via IPC. If a pushed component crashes on boot, the Core detects this and keeps the previous version running.
+Workers must listen on `process.env.SOCKET_PATH`. Readiness is signaled simply by the socket file existing and accepting connections. The kernel polls the socket with exponential backoff (up to 15 seconds). No IPC is required.
 
 ```javascript
 import { createServer } from 'node:http';
 const server = createServer((req, res) => { /* ... */ });
 
+// The kernel detects readiness when this socket file appears and accepts connections
 server.listen(process.env.SOCKET_PATH, () => {
-  if (process.send) process.send('ready'); // Signal the Core
+  console.log('Component ready');
 });
 
 process.on('SIGTERM', () => {
@@ -131,7 +132,7 @@ await appendFile('users/alice/payments.md', '\n## Payment ...\n');
 
 ### 4. Identity & The Mycelium
 
-The Core maintains an in-memory map of `deviceId → userId` called the **mycelium**. It feeds this map from IPC messages sent by user-managing components, and injects the resolved `userId` into every request as the `x-forest-user-id` header.
+The Core maintains an in-memory map of `deviceId → userId` called the **mycelium**. It feeds this map from a shared state file (`/users.json` at the forest root) written by user-managing components, and injects the resolved `userId` into every request as the `x-forest-user-id` header.
 
 There are two roles a component can play:
 
@@ -163,64 +164,57 @@ const label = quads.find(q => q.predicate.value === RDFS_LABEL)?.object.value;
 
 #### Producer Pattern (user-managing components)
 
-If your component manages user accounts (like a `/users` or `/auth` component), you are responsible for feeding the mycelium. You maintain your own `deviceMap` and notify the Core via IPC whenever mappings change.
+If your component manages user accounts (like a `/user` component), you are responsible for feeding the mycelium. You maintain your own `deviceMap` and sync it to the forest root via atomic file writes. 
 
-**On boot**, re-register all existing mappings:
+**The State File Contract:** The kernel watches `/users.json`. The format is a simple JSON object: `{"deviceId": "userId", ...}`. To prevent race conditions, always write to a `.tmp` file and rename it.
+
+```javascript
+import { writeFile, rename } from 'node:fs/promises';
+import { join } from 'node:path';
+
+const ROOT = join(process.env.COMPONENT_DIR, '..');
+const STATE_FILE = join(ROOT, 'users.json');
+
+async function syncStateFile() {
+  const content = JSON.stringify(Object.fromEntries(deviceMap));
+  const tmpPath = STATE_FILE + '.tmp';
+  await writeFile(tmpPath, content, 'utf8');
+  await rename(tmpPath, STATE_FILE); // Atomic write
+}
+```
+
+**On boot**, rebuild your local map from your semantic files, then sync the state file:
 
 ```javascript
 async function boot() {
   await rebuildDeviceMap(); // Scan your user files, build local map
-  
-  if (process.send) {
-    for (const [deviceId, userId] of deviceMap) {
-      process.send({ type: 'device-map', deviceId, userId });
-    }
-  }
+  await syncStateFile();    // Write to /users.json for the kernel
   
   server.listen(process.env.SOCKET_PATH, () => {
-    if (process.send) process.send('ready');
+    console.log('Ready');
   });
 }
 ```
 
-**When creating a user** and linking their first device:
+**When creating/linking/unlinking a user**, update your local map and sync:
 
 ```javascript
+// Link a device
 deviceMap.set(deviceId, userId);
-if (process.send) process.send({ type: 'device-map', deviceId, userId });
-```
+await syncStateFile();
 
-**When linking an additional device** (e.g., via recovery token):
-
-```javascript
-deviceMap.set(deviceId, targetUserId);
-if (process.send) process.send({ type: 'device-map', deviceId, userId: targetUserId });
-```
-
-**When unlinking a device**:
-
-```javascript
+// Unlink a device
 deviceMap.delete(targetDeviceId);
-if (process.send) process.send({ type: 'device-unmap', deviceId: targetDeviceId });
+await syncStateFile();
 ```
-
-#### The IPC Contract
-
-The Core listens for exactly two identity-related messages:
-
-| Message | Effect |
-|---------|--------|
-| `{ type: 'device-map', deviceId, userId }` | Maps device to user in the mycelium |
-| `{ type: 'device-unmap', deviceId }` | Removes device from the mycelium |
-
-These are fire-and-forget. The Core's map is a cache — if your component restarts, it re-registers everything on boot. If the Core restarts, it asks nothing of your component; the mycelium rebuilds as components boot and send their registrations.
 
 #### Why This Works
 
-- **Zero HTTP overhead**: Consumer components never call an auth service. They read a header.
-- **Zero coupling**: Producer components don't know who consumes the mycelium. Consumers don't know who produces it.
-- **Resilient to restarts**: If `/users` crashes and restarts, it re-registers on boot. Other components keep working from the Core's cached map in the meantime.
-- **Sovereign state**: The `/users` component owns the files. The Core only caches the index. The source of truth is always the filesystem.
+- **Zero hidden channels:** No IPC, no internal HTTP ports, no WebSockets. Coordination happens purely through the filesystem (the Noumenon).
+- **Zero coupling:** Producer components don't know who consumes the mycelium. Consumers don't know who produces it.
+- **Manual override:** Because it's just a file, an administrator can manually edit `/users.json` to grant access or debug, without touching the user component.
+- **Resilient to restarts:** If the kernel restarts, it reads the file. If the user component restarts, it rebuilds the map from its semantic files and overwrites the state file.
+- **Sovereign state:** The `/user` component owns the semantic profiles (Knowledge). The `users.json` file is just a volatile cache (Soil), safely ignored by Git.
 
 ## The Sovereign Ecosystem
 
@@ -236,10 +230,10 @@ Because the entire platform specification fits in roughly 9,000 tokens, modern L
 1.  **Autonomic Git Management:** The kernel breathes changes into Git history automatically. Components write files; the forest commits them. No race conditions, no lock files, no coordination overhead.
 2.  **Strict Static Boundary:** The `public/` directory is physically isolated. Path traversal is mathematically blocked.
 3.  **Timing-Safe Auth:** `GIT_SECRET` and `AUTH_SECRET` are validated using `crypto.timingSafeEqual`.
-4.  **Hardened Swaps:** Syntax errors in pushed code trigger a fallback to the previous working version.
+4.  **Hardened Swaps:** Syntax errors or boot timeouts in pushed code trigger a fallback to the previous working version. The kernel uses exponential backoff to verify socket readiness.
 5.  **Self-Healing State:** On boot, the Core auto-commits tracked file modifications to restore push-to-deploy capability, while ignoring untracked Soil to protect Git history.
 6.  **Stateless Identity (FIP):** Device identity is verified via HMAC-SHA256 at the edge. No session stores, no JWT bloat, no centralized user databases.
-7.  **Mycelium Coordination:** User identity flows through the Core's in-memory map, fed by the `/users` component via IPC. Zero HTTP overhead for identity resolution.
+7.  **Filesystem Mycelium:** User identity flows through the Core's in-memory map, fed by the `/user` component via atomic writes to a shared root state file (`users.json`), watched by the kernel. Zero network overhead for identity resolution.
 
 ## The Joy of the Forest
 
