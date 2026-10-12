@@ -283,9 +283,7 @@ function loadDeviceMap() {
       deviceUserMap.set(k, v);
     }
     console.log(`[identity] 🗺️ Loaded ${deviceUserMap.size} device mappings`);
-  } catch {
-    // File doesn't exist yet or is invalid
-  }
+  } catch { }
 }
 
 function watchDeviceMap() {
@@ -942,8 +940,6 @@ async function boot() {
   await ensureGitHook();
   console.log('[boot] 🪝 Git post-receive hook synced with current reload token.');
 
-  // Load device-user map and watch for changes
-  loadDeviceMap();
   watchDeviceMap();
 
   const entries = await readdir(ROOT, { withFileTypes: true });
