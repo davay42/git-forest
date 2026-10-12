@@ -2,7 +2,7 @@
 import { createServer, request, Agent } from "node:http";
 import { spawn, execFile } from "node:child_process";
 import { readdir, readFile, unlink, stat, mkdir, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, watch as watchSync, readFileSync } from "node:fs";
 import { join, extname } from "node:path";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
@@ -18,6 +18,7 @@ const GIT_SECRET = process.env.GIT_SECRET;
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const GIT_BACKUP_URL = process.env.GIT_BACKUP_URL;
 const RELOAD_TOKEN = process.env.RELOAD_TOKEN || crypto.randomBytes(16).toString('hex');
+const USER_STATE_FILE = join(ROOT, 'users.json');
 
 const envInt = (key, fallback) => {
   const val = parseInt(process.env[`FOREST_${key}`], 10);
@@ -27,7 +28,7 @@ const envInt = (key, fallback) => {
 const RATE_LIMIT_MAX = envInt('RATE_LIMIT_MAX', 5);
 const RATE_LIMIT_WINDOW_MS = envInt('RATE_LIMIT_WINDOW_MS', 60000);
 const RATE_LIMIT_CLEANUP_MS = envInt('RATE_LIMIT_CLEANUP_MS', 60000);
-const COMPONENT_READY_TIMEOUT_MS = envInt('COMPONENT_READY_TIMEOUT_MS', 2000);
+const COMPONENT_BOOT_TIMEOUT_MS = envInt('COMPONENT_BOOT_TIMEOUT_MS', 15000);
 const COMPONENT_RESTART_DELAY_MS = envInt('COMPONENT_RESTART_DELAY_MS', 3000);
 const COMPONENT_CLEANUP_DELAY_MS = envInt('COMPONENT_CLEANUP_DELAY_MS', 5000);
 const PROXY_MAX_SOCKETS = envInt('PROXY_MAX_SOCKETS', 128);
@@ -40,9 +41,9 @@ const MAX_AGE_DAYS = envInt('AUTH_MAX_AGE_DAYS', 90);
 const RENEWAL_WINDOW_DAYS = envInt('AUTH_RENEWAL_WINDOW_MS', 30);
 
 // ─── BREATHING CONFIGURATION ───────────────────────────────────────────────
-const BREATH_MS = envInt('BREATH_MS', 5000);              // Check for changes every 5s
-const SLEEP_AFTER_MS = envInt('SLEEP_AFTER_MS', 300000);  // 5 min quiet → sleep
-const DEEP_SLEEP_AFTER_MS = envInt('DEEP_SLEEP_AFTER_MS', 3600000); // 1 hour quiet → deep sleep
+const BREATH_MS = envInt('BREATH_MS', 5000);
+const SLEEP_AFTER_MS = envInt('SLEEP_AFTER_MS', 300000);
+const DEEP_SLEEP_AFTER_MS = envInt('DEEP_SLEEP_AFTER_MS', 3600000);
 
 // ─── GIT HTTP BACKEND DISCOVERY ────────────────────────────────────────────
 function discoverGitBackend() {
@@ -69,7 +70,7 @@ const startTime = Date.now();
 
 // ─── BREATHING STATE ────────────────────────────────────────────────────────
 let lastActivity = Date.now();
-let sleepState = 'awake'; // 'awake' | 'sleeping' | 'deep'
+let sleepState = 'awake';
 let breathCount = 0;
 let commitCount = 0;
 
@@ -82,7 +83,6 @@ function startBreathing() {
       const { stdout: dirty } = await exec('git', ['status', '--porcelain'], { cwd: ROOT });
 
       if (dirty.trim()) {
-        // Awake and breathing: commit changes
         sleepState = 'awake';
         lastActivity = Date.now();
         breathCount++;
@@ -113,7 +113,7 @@ function startBreathing() {
 
 function describeBreath(files) {
   const users = new Set();
-  const components = new Set();
+  const changedComponents = new Set();
   const codeChanges = [];
   const knowledgeChanges = [];
 
@@ -122,7 +122,7 @@ function describeBreath(files) {
     if (parts[0] === 'users' && parts.length >= 2) {
       users.add(parts[1]);
       if (parts.length >= 3 && parts[2] !== 'index.md') {
-        components.add(parts[2].replace('.md', ''));
+        changedComponents.add(parts[2].replace('.md', ''));
       }
     } else if (parts.length >= 2 && parts[1] === 'index.js') {
       codeChanges.push(parts[0]);
@@ -135,7 +135,7 @@ function describeBreath(files) {
   if (codeChanges.length > 0) segments.push(`deploy ${codeChanges.join('+')}`);
   if (knowledgeChanges.length > 0) segments.push(`${knowledgeChanges.join('+')} knowledge`);
   if (users.size > 0) {
-    const compList = [...components].join('+');
+    const compList = [...changedComponents].join('+');
     if (users.size === 1) segments.push(`user ${[...users][0]}${compList ? ` ${compList}` : ''}`);
     else segments.push(`${users.size} users${compList ? ` ${compList}` : ''}`);
   }
@@ -151,7 +151,6 @@ async function introspect(isDeep) {
 
   console.log(`[introspect] ${state} | Uptime: ${uptimeMin}m | Breaths: ${breathCount} | Commits: ${commitCount} | Components: ${active}`);
 
-  // Consolidate any orphaned changes
   try {
     const { stdout } = await exec('git', ['status', '--porcelain'], { cwd: ROOT });
     if (stdout.trim()) {
@@ -161,14 +160,10 @@ async function introspect(isDeep) {
     }
   } catch { }
 
-  // Optimize repository
   await exec('git', ['gc', '--auto'], { cwd: ROOT }).catch(() => { });
-
-  // Sync backup
   if (GIT_BACKUP_URL) await syncToBackup();
 
   if (isDeep) {
-    // Deep sleep maintenance: prune reflog, repack
     await exec('git', ['reflog', 'expire', '--expire=30.days.ago', '--all'], { cwd: ROOT }).catch(() => { });
     await exec('git', ['repack', '-a', '-d'], { cwd: ROOT }).catch(() => { });
     console.log('[introspect] 🧹 Deep maintenance complete');
@@ -277,6 +272,55 @@ function processIdentity(req, res) {
   req.forestDeviceId = deviceId;
 }
 
+// ─── DEVICE-USER MAP (File-based with fs.watch) ─────────────────────────────
+function loadDeviceMap() {
+  try {
+    if (!existsSync(USER_STATE_FILE)) return;
+    const raw = readFileSync(USER_STATE_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    deviceUserMap.clear();
+    for (const [k, v] of Object.entries(data)) {
+      deviceUserMap.set(k, v);
+    }
+    console.log(`[identity] 🗺️ Loaded ${deviceUserMap.size} device mappings`);
+  } catch {
+    // File doesn't exist yet or is invalid
+  }
+}
+
+function watchDeviceMap() {
+  try {
+    watchSync(USER_STATE_FILE, { persistent: false }, () => {
+      loadDeviceMap();
+    });
+    console.log('[identity] 👁️  Watching users.json for changes');
+  } catch {
+    // File doesn't exist yet, will be created on first user action
+  }
+}
+
+// ─── SOCKET READINESS DETECTION (exponential backoff, 15s default) ─────────
+async function waitForSocket(socketPath, timeout = COMPONENT_BOOT_TIMEOUT_MS) {
+  const start = Date.now();
+  let delay = 50;
+
+  while (Date.now() - start < timeout) {
+    if (existsSync(socketPath)) {
+      const connected = await new Promise((resolve) => {
+        const sock = net.connect({ path: socketPath });
+        sock.on('connect', () => { sock.end(); resolve(true); });
+        sock.on('error', () => resolve(false));
+        setTimeout(() => { sock.destroy(); resolve(false); }, 1000);
+      });
+      if (connected) return true;
+    }
+    await new Promise(r => setTimeout(r, delay));
+    delay = Math.min(delay * 2, 1000);
+  }
+
+  return false;
+}
+
 // ─── COMPONENT LIFECYCLE ───────────────────────────────────────────────────
 async function swapComponent(name) {
   const oldComponent = components.get(name);
@@ -294,32 +338,39 @@ async function swapComponent(name) {
       COMPONENT_DIR: join(ROOT, name),
       FOREST_CORE_PORT: PORT
     },
-    stdio: ['inherit', 'inherit', 'inherit', 'ipc']
+    stdio: ['ignore', 'pipe', 'pipe']
   });
 
-  let ready = false;
-  let exitedEarly = false;
-
-  await new Promise((resolve) => {
-    const done = () => resolve();
-    newProc.on('message', async (msg) => {
-      if (msg === 'ready') {
-        ready = true;
-        done();
-      } else if (msg && msg.type === 'device-map') {
-        deviceUserMap.set(msg.deviceId, msg.userId);
-      } else if (msg && msg.type === 'device-unmap') {
-        deviceUserMap.delete(msg.deviceId);
-      }
-      // Note: 'commit' messages are no longer handled. The kernel breathes automatically.
-    });
-    newProc.once('exit', (code) => { exitedEarly = true; done(); });
-    setTimeout(done, COMPONENT_READY_TIMEOUT_MS);
+  // Pipe stdout/stderr with component prefix
+  newProc.stdout.on('data', d => {
+    for (const line of d.toString().split('\n')) {
+      if (line.trim()) process.stdout.write(`[${name}] ${line}\n`);
+    }
   });
+  newProc.stderr.on('data', d => {
+    for (const line of d.toString().split('\n')) {
+      if (line.trim()) process.stderr.write(`[${name}] ${line}\n`);
+    }
+  });
+
+  // Track exit for crash detection
+  let exited = false;
+  newProc.on("exit", (code) => {
+    exited = true;
+    if (code !== 0 && code !== null && components.get(name)?.proc === newProc) {
+      console.log(`[error] /${name} crashed with code ${code}. Restarting in 3s...`);
+      components.delete(name);
+      setTimeout(() => swapComponent(name), COMPONENT_RESTART_DELAY_MS);
+    }
+  });
+
+  // Wait for socket to appear and accept connections
+  const ready = await waitForSocket(socketPath);
 
   if (!ready) {
-    console.log(`[sync] ❌ /${name} failed to start (ready=${ready}, exited=${exitedEarly}) — keeping previous version live`);
-    if (!exitedEarly) newProc.kill("SIGKILL");
+    const reason = exited ? 'process exited early' : `timed out after ${COMPONENT_BOOT_TIMEOUT_MS / 1000}s`;
+    console.log(`[sync] ❌ /${name} failed to start: ${reason}`);
+    if (!exited) newProc.kill("SIGKILL");
     return;
   }
 
@@ -330,14 +381,6 @@ async function swapComponent(name) {
     oldComponent.proc.kill("SIGTERM");
     setTimeout(() => unlink(oldComponent.socketPath).catch(() => { }), COMPONENT_CLEANUP_DELAY_MS);
   }
-
-  newProc.on("exit", (code) => {
-    if (code !== 0 && code !== null && components.get(name)?.proc === newProc) {
-      console.log(`[error] /${name} crashed with code ${code}. Restarting in 3s...`);
-      components.delete(name);
-      setTimeout(() => swapComponent(name), COMPONENT_RESTART_DELAY_MS);
-    }
-  });
 }
 
 function killComponent(name) {
@@ -630,7 +673,8 @@ const server = createServer(async (req, res) => {
         is_reloading: isReloading,
         breath_state: sleepState,
         breath_count: breathCount,
-        commit_count: commitCount
+        commit_count: commitCount,
+        device_user_mappings: deviceUserMap.size
       };
 
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -699,6 +743,12 @@ async function performReload(targetComponents = null) {
 // ─── GRACEFUL SHUTDOWN ──────────────────────────────────────────────────────
 function gracefulShutdown(signal) {
   console.log(`[core] ⏹️ Received ${signal}. Closing HTTP server gracefully...`);
+
+  for (const [name, component] of components) {
+    component.proc.kill("SIGTERM");
+    unlink(component.socketPath).catch(() => { });
+  }
+
   server.close(() => {
     console.log('[core] ✅ Active connections finished. Exiting.');
     process.exit(0);
@@ -901,6 +951,10 @@ async function boot() {
   await ensureGitHook();
   console.log('[boot] 🪝 Git post-receive hook synced with current reload token.');
 
+  // Load device-user map and watch for changes
+  loadDeviceMap();
+  watchDeviceMap();
+
   const entries = await readdir(ROOT, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "public") {
@@ -919,6 +973,7 @@ async function boot() {
     console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
     console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
     console.log(`[breath] 🌬️ Autonomic Git management started (${BREATH_MS}ms breath, ${SLEEP_AFTER_MS}ms sleep)`);
+    console.log(`[boot] ⏱️  Component boot timeout: ${COMPONENT_BOOT_TIMEOUT_MS / 1000}s (exponential backoff)`);
   });
 
   setupWebSocketUpgrade();
