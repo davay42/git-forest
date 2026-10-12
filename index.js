@@ -338,19 +338,7 @@ async function swapComponent(name) {
       COMPONENT_DIR: join(ROOT, name),
       FOREST_CORE_PORT: PORT
     },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-
-  // Pipe stdout/stderr with component prefix
-  newProc.stdout.on('data', d => {
-    for (const line of d.toString().split('\n')) {
-      if (line.trim()) process.stdout.write(`[${name}] ${line}\n`);
-    }
-  });
-  newProc.stderr.on('data', d => {
-    for (const line of d.toString().split('\n')) {
-      if (line.trim()) process.stderr.write(`[${name}] ${line}\n`);
-    }
+    stdio: ['ignore', 'inherit', 'inherit']
   });
 
   // Track exit for crash detection
@@ -950,14 +938,6 @@ async function boot() {
 
   await ensureGitHook();
   console.log('[boot] 🪝 Git post-receive hook synced with current reload token.');
-
-  // Clean up any stale forest sockets from previous runs
-  const tmpFiles = await readdir('/tmp').catch(() => []);
-  for (const file of tmpFiles) {
-    if (file.startsWith('forest-') && file.endsWith('.sock')) {
-      await unlink(join('/tmp', file)).catch(() => { });
-    }
-  }
 
   // Load device-user map and watch for changes
   loadDeviceMap();
