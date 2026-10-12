@@ -38,7 +38,7 @@ const SHUTDOWN_TIMEOUT_MS = envInt('SHUTDOWN_TIMEOUT_MS', 5000);
 const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'forest_session';
 const MAX_AGE_DAYS = envInt('AUTH_MAX_AGE_DAYS', 90);
-const RENEWAL_WINDOW_DAYS = envInt('AUTH_RENEWAL_WINDOW_MS', 30);
+const RENEWAL_WINDOW_DAYS = envInt('AUTH_RENEWAL_WINDOW_DAYS', 30);
 
 // ─── BREATHING CONFIGURATION ───────────────────────────────────────────────
 const BREATH_MS = envInt('BREATH_MS', 5000);
@@ -290,12 +290,15 @@ function loadDeviceMap() {
 
 function watchDeviceMap() {
   try {
-    watchSync(USER_STATE_FILE, { persistent: false }, () => {
-      loadDeviceMap();
+    loadDeviceMap(); // Load once at boot
+    watchSync(ROOT, { persistent: false }, (eventType, filename) => {
+      if (filename === 'users.json') {
+        setTimeout(loadDeviceMap, 100);
+      }
     });
     console.log('[identity] 👁️  Watching users.json for changes');
-  } catch {
-    // File doesn't exist yet, will be created on first user action
+  } catch (err) {
+    console.error('[identity] Watch failed:', err.message);
   }
 }
 
