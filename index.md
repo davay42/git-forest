@@ -51,6 +51,36 @@ Range: [text] {+xsd:string ?range}
 Domain: [Role] {+prov:Role ?domain}
 Range: [text] {+xsd:string ?range}
 
+### Role {=prov:Role .Class label}
+
+A component role has a [route] {+gf:hasRoute .rdf:Property ?domain}, expects [input] {+gf:expectsInput .rdf:Property ?domain}, generates [output] {+gf:generatesOutput .rdf:Property ?domain}, requires [prerequisite] {+gf:requiresPrerequisite .rdf:Property ?domain} and has a short text description of the [implementation] {+gf:hasImplementation .rdf:Property ?domain}. 
+
+### Role Validation Shape {=gf:RoleContractShape .sh:NodeShape label}
+
+> Ensures every declared Role has a complete, logical contract without being overly rigid. {comment}
+
+Targets all [Roles] {+prov:Role ?sh:targetClass} to ensure they have a [trigger] {+#trigger ?sh:property sh:name}, [path] {+#path ?sh:property sh:name}, [inputs] {+#inputs ?sh:property sh:name}, [outputs] {+#outputs ?sh:property sh:name}, [prerequisites] {+#prerequisites ?sh:property sh:name} and [plan] {+#plan ?sh:property sh:name}.
+
+**Role must have at least one trigger** {=#trigger .sh:PropertyShape sh:message} requires [trigger] {+gf:hasTrigger ?sh:path} to have at least [1] {sh:minCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} value. 
+
+**Role must have a path** {=#path .sh:PropertyShape sh:message} requires [path] {+gf:hasPath ?sh:path} to have exactly [1] {sh:minCount sh:maxCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} value. 
+
+**Role must describe its inputs** {=#inputs .sh:PropertyShape sh:message} requires [input] {+gf:expectsInput ?sh:path} to have at least [1] {sh:minCount ^^xsd:integer}  [string] {+xsd:string ?sh:datatype} values. 
+
+**Role must describe its outputs** {=#outputs .sh:PropertyShape sh:message} requires [output] {+gf:generatesOutput ?sh:path} to have at least [1] {sh:minCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} value. 
+
+**Role must describe its prerequisites** {=#prerequisites .sh:PropertyShape sh:message} requires [prerequisite] {+gf:requiresPrerequisite ?sh:path} to have at least [1] {sh:minCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} values. 
+
+**Role must have exactly one implementation plan** {=#plan .sh:PropertyShape sh:message} requires [plan] {+prov:hadPlan ?sh:path} to have exactly [1] {sh:minCount sh:maxCount ^^xsd:integer} instance of a [Plan] {+prov:Plan ?sh:class}.
+
+### Plan Shape {=gf:PlanShape .sh:NodeShape label}
+
+> Ensures every declared Plan has a complete, logical contract without being overly rigid. {comment}
+
+Targets all [Plans] {+prov:Plan ?sh:targetClass} to ensure they have a [value] {+#value ?sh:property sh:name}.
+
+**Plan must have a prov:value** {=#value .sh:PropertyShape sh:message} requires [value] {+prov:value ?sh:path} to have exactly [1] {sh:minCount sh:maxCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} value. 
+
 ---
 
 ## Act I: Meeting the World
