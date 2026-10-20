@@ -59,7 +59,7 @@ A component role has a [route] {+gf:hasRoute .rdf:Property ?domain}, expects [in
 
 > Ensures every declared Role has a complete, logical contract without being overly rigid. {comment}
 
-Targets all [Roles] {+prov:Role ?sh:targetClass} to ensure they have a [trigger] {+#trigger ?sh:property sh:name}, [path] {+#path ?sh:property sh:name}, [inputs] {+#inputs ?sh:property sh:name}, [outputs] {+#outputs ?sh:property sh:name}, [prerequisites] {+#prerequisites ?sh:property sh:name} and [plan] {+#plan ?sh:property sh:name}.
+Targets all [Roles] {+prov:Role ?sh:targetClass} to ensure they have a [trigger] {+#trigger ?sh:property sh:name label}, [path] {+#path ?sh:property sh:name label}, [inputs] {+#inputs ?sh:property sh:name label}, [outputs] {+#outputs ?sh:property sh:name label}, [prerequisites] {+#prerequisites ?sh:property sh:name label} and [plan] {+#plan ?sh:property sh:name label}.
 
 **Role must have at least one trigger** {=#trigger .sh:PropertyShape sh:message} requires [trigger] {+gf:hasTrigger ?sh:path} to have at least [1] {sh:minCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} value. 
 
@@ -77,7 +77,7 @@ Targets all [Roles] {+prov:Role ?sh:targetClass} to ensure they have a [trigger]
 
 > Ensures every declared Plan has a complete, logical contract without being overly rigid. {comment}
 
-Targets all [Plans] {+prov:Plan ?sh:targetClass} to ensure they have a [value] {+#value ?sh:property sh:name}.
+Targets all [Plans] {+prov:Plan ?sh:targetClass} to ensure they have a [value] {+#value ?sh:property sh:name label}.
 
 **Plan must have a prov:value** {=#value .sh:PropertyShape sh:message} requires [value] {+prov:value ?sh:path} to have exactly [1] {sh:minCount sh:maxCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} value. 
 
