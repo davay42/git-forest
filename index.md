@@ -17,49 +17,17 @@ Made by **davay42** {+d: .prov:Person ?prov:actedOnBehalfOf label} as a personal
 
 ## The Kernel Agent {=gf:kernel .prov:SoftwareAgent label}
 
-The kernel is the foundational agent for the forest of any kind of digital [organization] {+prov:Organization ?prov:actedOnBehalfOf}. It is a single Node.js process with zero dependencies, implemented in [./index.js](./index.js). It wakes up, heals its Git state, discovers its [components] {+prov:SoftwareAgent ?gf:kernel/discovers}, and begins listening on the configured port. From that moment, it performs four kinds of work — continuously, rhythmically, without being asked. The author assigns [Roles] {=prov:Role ?prov:hadRole} to the Agent and it executes them according to the [Plan] {+prov:Plan ?prov:hadPlan}.
+The kernel is the foundational agent for the forest of any kind of digital [organization] {+prov:Organization ?prov:actedOnBehalfOf}. It is a single Node.js process with zero dependencies, implemented in [./index.js](./index.js). It wakes up, heals its Git state, discovers its [components] {+prov:SoftwareAgent ?gf:kernel/discovers}, and begins listening on the configured port. From that moment, it performs four kinds of work — continuously, rhythmically, without being asked. The author assigns [Roles] {=prov:Role ?prov:hadRole} to the Agent.
 
-### Role Contract {=prov:Role .Class}
+## Role {=prov:Role .Class label}
 
-Every role the kernel plays is described by six properties. Together they form the complete interface contract:
-
-### Has a Trigger {=gf:hasTrigger !domain .rdf:Property label} 
-> What invokes this role: an HTTP method + path, internal interval, signal, or boot event. {comment}
-Plain [text] {+xsd:string ?range} descriptor - paths, time spans, signals, observation criteria:
-
-#### Had Plan {=prov:hadPlan .rdf:Property label}
-> Step-by-step algorithm description — the teachback safeguard. {comment}
-Defined inline as a `prov:Plan` [plan] {+prov:Plan ?range} with a hashed IRI, attached to a [role] {+prov:Role ?domain} via `prov:hadRole` → `prov:hadPlan`.
-
-#### Has Path {=gf:hasPath .rdf:Property label}
-> The exact file path and line number where this role's implementation lives. {comment}
-[text] {+xsd:string ?range} path to the exact place where the executable code lives[Role] {+prov:Role ?domain}
-Range: 
-
-#### Expects Input {=gf:expectsInput .rdf:Property label}
-> What the role reads: headers, body, filesystem, query parameters. {comment}
-Domain: [Role] {+prov:Role ?domain}
-Range: [text] {+xsd:string ?range}
-
-#### Generates Output {=gf:generatesOutput .rdf:Property label}
-> What the role writes: HTTP response, files, side effects, events. {comment}
-Domain: [Role] {+prov:Role ?domain}
-Range: [text] {+xsd:string ?range}
-
-#### Requires Prerequisite {=gf:requiresPrerequisite .rdf:Property label}
-> What must be true before the role can execute: auth, access, state. {comment}
-Domain: [Role] {+prov:Role ?domain}
-Range: [text] {+xsd:string ?range}
-
-### Role {=prov:Role .Class label}
-
-A component role has a [route] {+gf:hasRoute .rdf:Property ?domain}, expects [input] {+gf:expectsInput .rdf:Property ?domain}, generates [output] {+gf:generatesOutput .rdf:Property ?domain}, requires [prerequisite] {+gf:requiresPrerequisite .rdf:Property ?domain} and has a short text description of the [implementation] {+gf:hasImplementation .rdf:Property ?domain}. 
+A component role has a [trigger] {+gf:hasTrigger .rdf:Property ?domain}, [path] {+gf:hasPath .rdf:Property ?domain}, expects [input] {+gf:expectsInput .rdf:Property ?domain}, generates [output] {+gf:generatesOutput .rdf:Property ?domain}, requires [prerequisite] {+gf:requiresPrerequisite .rdf:Property ?domain} and has a short text description of the [implementation plan] {=prov:hadPlan .rdf:Property ?domain} as an instance of a [Plan] {=prov:Plan ?range} with a condensed text instructions as the [value] {+prov:value .rdf:Property ?domain}.
 
 ### Role Validation Shape {=gf:RoleContractShape .sh:NodeShape label}
 
 > Ensures every declared Role has a complete, logical contract without being overly rigid. {comment}
 
-Targets all [Roles] {+prov:Role ?sh:targetClass} to ensure they have a [trigger] {+#trigger ?sh:property sh:name label}, [path] {+#path ?sh:property sh:name label}, [inputs] {+#inputs ?sh:property sh:name label}, [outputs] {+#outputs ?sh:property sh:name label}, [prerequisites] {+#prerequisites ?sh:property sh:name label} and [plan] {+#plan ?sh:property sh:name label}.
+All [Roles] {+prov:Role ?sh:targetClass} should have [trigger] {+#trigger ?sh:property sh:name label}, a [path] {+#path ?sh:property sh:name label}, some [inputs] {+#inputs ?sh:property sh:name label}, some [outputs] {+#outputs ?sh:property sh:name label}, some [prerequisites] {+#prerequisites ?sh:property sh:name label} and a single [plan] {+#plan ?sh:property sh:name label}.
 
 **Role must have at least one trigger** {=#trigger .sh:PropertyShape sh:message} requires [trigger] {+gf:hasTrigger ?sh:path} to have at least [1] {sh:minCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} value. 
 
@@ -71,15 +39,13 @@ Targets all [Roles] {+prov:Role ?sh:targetClass} to ensure they have a [trigger]
 
 **Role must describe its prerequisites** {=#prerequisites .sh:PropertyShape sh:message} requires [prerequisite] {+gf:requiresPrerequisite ?sh:path} to have at least [1] {sh:minCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} values. 
 
-**Role must have exactly one implementation plan** {=#plan .sh:PropertyShape sh:message} requires [plan] {+prov:hadPlan ?sh:path} to have exactly [1] {sh:minCount sh:maxCount ^^xsd:integer} instance of a [Plan] {+prov:Plan ?sh:class}.
+**Role must have exactly one implementation plan** {=#plan .sh:PropertyShape sh:message} requires [hadPlan] {+prov:hadPlan ?sh:path} to have exactly [1] {sh:minCount sh:maxCount ^^xsd:integer} instance of a [Plan] {+prov:Plan ?sh:class}.
 
 ### Plan Shape {=gf:PlanShape .sh:NodeShape label}
 
 > Ensures every declared Plan has a complete, logical contract without being overly rigid. {comment}
 
-Targets all [Plans] {+prov:Plan ?sh:targetClass} to ensure they have a [value] {+#value ?sh:property sh:name label}.
-
-**Plan must have a prov:value** {=#value .sh:PropertyShape sh:message} requires [value] {+prov:value ?sh:path} to have exactly [1] {sh:minCount sh:maxCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} value. 
+Targets all [Plans] {+prov:Plan ?sh:targetClass} to ensure they have a **value** {=#value .sh:PropertyShape ?sh:property sh:name label}. Rule *Plan must have a single prov:value* {sh:message} requires [value] {+prov:value ?sh:path} to have exactly [1] {sh:minCount sh:maxCount ^^xsd:integer} [string] {+xsd:string ?sh:datatype} value. 
 
 ---
 

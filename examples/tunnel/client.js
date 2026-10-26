@@ -95,8 +95,8 @@ function handleWebSocketData(chunk) {
         console.error('[client] Parse error:', err);
       }
     } else if (frame.opcode === 0x2) { // Binary frame
-      const requestId = frame.payload.subarray(0, 8).toString('hex');
-      const chunk = frame.payload.subarray(8);
+      const requestId = frame.payload.subarray(0, 4).toString('hex');
+      const chunk = frame.payload.subarray(4);
       const stream = activeRequests.get(requestId);
       if (stream) stream.req.write(chunk);
     } else if (frame.opcode === 0x8) { // Close frame
