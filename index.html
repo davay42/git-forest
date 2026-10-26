@@ -58,6 +58,9 @@
   @media(prefers-reduced-motion:no-preference){
     @keyframes grow{from{scale:0 1}to{scale:1 1}}
     .grow{animation:grow linear both;animation-timeline:scroll(root)}
+    /* rise from below as each block enters the viewport; no JS, and content stays visible where unsupported */
+    @keyframes rise{from{opacity:0;translate:0 2.5rem}to{opacity:1;translate:0 0}}
+    section .wrap>*{animation:rise ease-out both;animation-timeline:view();animation-range:entry 0% entry 45%}
   }
 }
 
