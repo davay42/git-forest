@@ -5,81 +5,140 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>git-forest — a sovereign forest you can copy, read and own</title>
 <meta name="description" content="git-forest: a zero-dependency Node.js kernel where the filesystem is the router, directories are agents and Git is the arrow of time. Copy one file and grow your own forest.">
-<meta name="theme-color" content="#bfe3f5">
+<meta name="theme-color" content="#bfe3f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16241d" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="git-forest — sovereign, zero-dependency, self-hosted">
 <meta property="og:description" content="Copy one index.js. Grow a forest you own. No frameworks, no database, no pipeline.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌲</text></svg>">
 <style>
+/* ───────── wind: two registered numbers drive every swaying thing ───────── */
+@property --wind{syntax:"<number>";inherits:true;initial-value:0}
+@property --gust{syntax:"<number>";inherits:true;initial-value:0}
+
+/* ───────── tokens (oklch; derived tints via color-mix; light-dark for night) ───────── */
 :root{
-  --bark:#5a3b24;--bark2:#8a6240;--leaf:#2e7d4f;--leaf2:#5aa56b;--moss:#e3efd9;
-  --sky:#bfe3f5;--sky2:#7cc3e6;--link:#2f86b5;--sand:#f7f2e7;--card:#fffdf8;
-  --ink:#2b2118;--mute:#66554a;--line:#e5d9c4;--r:1.25rem;
+  color-scheme:light dark;
+  --paper:light-dark(oklch(96.5% .018 85),oklch(21% .025 155));
+  --card:light-dark(oklch(99% .008 85),oklch(26% .03 155));
+  --ink:light-dark(oklch(24% .03 60),oklch(93% .02 90));
+  --mute:light-dark(oklch(46% .03 60),oklch(76% .025 100));
+  --line:color-mix(in oklch,var(--ink) 13%,var(--paper));
+  --bark:light-dark(oklch(38% .065 55),oklch(80% .06 75));      /* headings */
+  --leaf:light-dark(oklch(50% .12 155),oklch(76% .15 155));      /* accents / links */
+  --link:light-dark(oklch(52% .12 235),oklch(80% .1 230));
+  --sky:light-dark(oklch(89% .06 230),oklch(30% .05 245));
+  --sky2:light-dark(oklch(76% .1 230),oklch(62% .11 235));
+  --moss:light-dark(oklch(94.5% .04 145),oklch(27.5% .045 155));
+  /* filled shapes keep a mid tone in both schemes so white text always works */
+  --f-bark:light-dark(oklch(38% .065 55),oklch(48% .07 55));
+  --f-bark2:light-dark(oklch(56% .08 60),oklch(56% .08 60));
+  --f-leaf:light-dark(oklch(50% .12 155),oklch(46% .11 155));
+  --f-leaf2:light-dark(oklch(66% .12 150),oklch(58% .12 150));
+  --soil:light-dark(oklch(48% .08 55),oklch(30% .05 55));
+  --code:light-dark(oklch(25% .03 55),oklch(16% .02 155));
+  --r:1.25rem;                                   /* card radius; inner shapes use r minus padding */
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sway:calc((var(--wind)*1.6 + var(--gust)*.9)*var(--k,1)*1deg);
 }
+@media(prefers-reduced-motion:no-preference){
+  @keyframes wind{from{--wind:-1}to{--wind:1}}
+  @keyframes gust{from{--gust:-1}to{--gust:1}}
+  @keyframes flow{to{stroke-dashoffset:-36}}
+  @keyframes breathe{0%,100%{scale:1}50%{scale:1.1}}
+  @keyframes drift{to{translate:3rem 0}}
+  :root{animation:wind 6s ease-in-out infinite alternate,gust 11s ease-in-out infinite alternate}
+  .forest .m{animation:flow 5s linear infinite}
+  .le{animation:flow 2.4s linear infinite}
+  .stats div:first-child b{animation:breathe 5s ease-in-out infinite}
+  .hero::before{animation:drift 18s ease-in-out infinite alternate}
+  .card,.steps li,.btn{transition:translate .25s,scale .15s}
+  html{scroll-behavior:smooth}
+}
+@supports(animation-timeline:scroll()){
+  @media(prefers-reduced-motion:no-preference){
+    @keyframes grow{from{scale:0 1}to{scale:1 1}}
+    .grow{animation:grow linear both;animation-timeline:scroll(root)}
+  }
+}
+
+/* ───────── base ───────── */
 *{box-sizing:border-box;margin:0}
 ul,ol{padding:0}
-html{scroll-behavior:smooth;scroll-padding-top:5rem}
-body{font:1rem/1.65 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--sand)}
+html{scroll-padding-top:5rem}
+body{font:1rem/1.65 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--paper)}
 a{color:var(--leaf);font-weight:600}
-a:focus-visible,button:focus-visible{outline:3px solid var(--sky2);outline-offset:2px}
-h1,h2,h3{line-height:1.15;color:var(--bark)}
-h2{font-size:clamp(1.6rem,4vw,2.4rem);margin-bottom:.6rem}
+:focus-visible{outline:3px solid currentColor;outline-offset:3px;border-radius:.4em}
+h1,h2,h3{line-height:1.15;color:var(--bark);text-wrap:balance}
+h2{font-size:clamp(1.6rem,.9rem + 3vw,2.5rem);margin-bottom:.6rem}
 h3{font-size:1.15rem;margin-bottom:.35rem}
+p{text-wrap:pretty}
 p+p{margin-top:.8rem}
 code{font:.88em var(--mono);background:var(--moss);padding:.1em .45em;border-radius:.5em}
-.wrap{width:min(68rem,100% - 2.5rem);margin-inline:auto}
+.grow{position:fixed;inset:0 0 auto;height:4px;z-index:20;background:linear-gradient(90deg,var(--f-leaf2),var(--sky2));transform-origin:left;scale:0 1}
+
+/* breakout grid: children pick content | breakout | full without wrappers */
+.wrap{display:grid;grid-template-columns:[full-start] minmax(1.25rem,1fr) [breakout-start] minmax(0,3rem) [content-start] min(100% - 2.5rem,62rem) [content-end] minmax(0,3rem) [breakout-end] minmax(1.25rem,1fr) [full-end]}
+.wrap>*{grid-column:content}
+.wrap>pre,.wrap>.split,.wrap>.fig,.wrap>.stats{grid-column:breakout}
 section{padding-block:clamp(2.5rem,7vw,5rem)}
 section.alt{background:var(--moss);border-radius:2rem;margin-inline:.6rem}
-section.alt :not(pre)>code{background:#fff9}
-.kicker{display:inline-block;font:700 .78rem var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--leaf);background:var(--moss);border-radius:99px;padding:.15rem .8rem;margin-bottom:.7rem}
+section.alt :not(pre)>code{background:color-mix(in oklch,var(--card) 70%,transparent)}
+.kicker{justify-self:start;font:700 .78rem var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--leaf);background:var(--moss);border-radius:99px;padding:.15rem .8rem;margin-bottom:.7rem}
 .alt .kicker{background:var(--card)}
 .lede{color:var(--mute);max-width:46rem;margin-bottom:1.6rem}
+.next{justify-self:end;margin-top:1.6rem;text-decoration:none;color:var(--leaf);border:2px solid currentColor;border-radius:99px;padding:.3rem 1.1rem;font-size:.9rem}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem}
 .split{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,24rem),1fr));gap:1.2rem;align-items:start}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:1.15rem 1.3rem;border-top:6px solid var(--c,var(--leaf2))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:1.15rem 1.3rem;border-top:6px solid var(--c,var(--f-leaf2))}
+.grid>.card{display:grid;grid-template-rows:subgrid;grid-row:span 3;row-gap:0;align-content:start}  /* titles, bodies, footers line up across cards */
 .card p{color:var(--mute);font-size:.95rem}
-.card ul{list-style:none;font:.85rem/1.8 var(--mono);color:var(--mute);margin-top:.5rem}
-pre{background:#2a1f16;color:#f1e7d6;border-radius:var(--r);padding:1.1rem 1.3rem;overflow-x:auto;font:.84rem/1.7 var(--mono);margin-block:1rem}
+.card ul:not(.chips){list-style:none;font:.85rem/1.8 var(--mono);color:var(--mute);margin-top:.5rem}
+pre{background:var(--code);color:oklch(92% .03 85);border-radius:var(--r);padding:1.1rem 1.3rem;overflow-x:auto;font:.84rem/1.7 var(--mono);margin-block:1rem}
 pre code{background:none;padding:0;font-size:inherit;color:inherit}
-pre .c{color:#9fb59a}pre .k{color:#8fd0f0}pre .s{color:#a8dc9a}
-.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.7rem 1.3rem;border-radius:99px;font-weight:700;text-decoration:none;border:2px solid var(--bark);color:var(--bark);background:#fffa;transition:transform .15s}
-.btn:hover{transform:translateY(-2px)}
-.btn.p{background:var(--bark);color:#fff}
-.cmd{display:inline-flex;align-items:center;gap:.6rem;font:.88rem var(--mono);background:#fffb;border:2px dashed var(--bark2);border-radius:99px;padding:.35rem .4rem .35rem 1.1rem}
-.cmd button{border:0;background:var(--leaf);color:#fff;border-radius:99px;padding:.3rem .9rem;font:700 .8rem system-ui;cursor:pointer}
+pre .c{color:oklch(72% .06 150)}pre .k{color:oklch(80% .09 230)}pre .s{color:oklch(82% .13 145)}
+.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.7rem 1.3rem;border-radius:99px;font-weight:700;text-decoration:none;border:2px solid var(--f-bark);color:var(--bark);background:color-mix(in oklch,var(--card) 70%,transparent)}
+.btn.p{background:var(--f-bark);color:#fff}
+.cmd{display:inline-flex;align-items:center;gap:.6rem;font:.88rem var(--mono);background:color-mix(in oklch,var(--card) 75%,transparent);border:2px dashed var(--f-bark2);border-radius:99px;padding:.35rem .4rem .35rem 1.1rem}
+.cmd button{border:0;background:var(--f-leaf);color:#fff;border-radius:99px;padding:.3rem .9rem;font:700 .8rem system-ui;cursor:pointer}
+.btn:active,.cmd button:active{scale:.97}
+@media(hover:hover) and (pointer:fine){
+  .card:hover,.steps li:hover{translate:0 -3px}
+  .btn:hover{translate:0 -2px}
+}
 
 /* header */
-header{position:sticky;top:.6rem;z-index:9;display:flex;flex-wrap:wrap;align-items:center;gap:.2rem .6rem;width:min(68rem,100% - 1.2rem);margin:.6rem auto 0;padding:.4rem .6rem .4rem 1rem;border-radius:1.6rem;background:#fffdf8e6;backdrop-filter:blur(8px);box-shadow:0 4px 18px #5a3b2422}
-header b{display:flex;align-items:center;gap:.4rem;color:var(--bark);font-size:1.05rem}
-.logo{display:inline-block;font-size:1.5rem;line-height:1;transform-origin:50% 100%;animation:sway 5s ease-in-out infinite alternate}
-header{flex-wrap:nowrap}
-header b{flex:none}
+header{position:sticky;top:.6rem;z-index:9;display:flex;align-items:center;gap:.6rem;width:min(68rem,100% - 1.2rem);margin:.6rem auto 0;padding:.4rem .6rem .4rem 1rem;border-radius:1.6rem;background:color-mix(in oklch,var(--card) 90%,transparent);backdrop-filter:blur(8px);box-shadow:0 4px 18px color-mix(in oklch,var(--soil) 25%,transparent)}
+header b{flex:none;display:flex;align-items:center;gap:.4rem;color:var(--bark);font-size:1.05rem}
+.logo{display:inline-block;font-size:1.5rem;line-height:1;transform-origin:50% 100%;rotate:var(--sway)}
 header nav{display:flex;gap:.1rem;margin-left:auto;overflow-x:auto;scrollbar-width:none}
-header nav a{flex:none}
-header nav a{padding:.25rem .75rem;border-radius:99px;font-size:.88rem;color:var(--bark);text-decoration:none}
+header nav a{flex:none;padding:.25rem .75rem;border-radius:99px;font-size:.88rem;color:var(--bark);text-decoration:none}
 header nav a:hover{background:var(--moss)}
 
 /* hero */
-.hero{position:relative;overflow:hidden;margin:.6rem;border-radius:2rem;background:linear-gradient(var(--sky),#e8f5fb 55%,var(--moss));padding:clamp(3rem,9vw,6rem) 0 clamp(10rem,24vw,16rem)}
+.hero{position:relative;overflow:hidden;margin:.6rem;border-radius:2rem;background:linear-gradient(var(--sky),color-mix(in oklch,var(--sky) 35%,var(--paper)) 55%,var(--moss));padding:clamp(3rem,9vw,6rem) 0 clamp(10rem,24vw,16rem)}
+.hero::before{content:"☁️";position:absolute;top:18%;right:12%;font-size:3rem;opacity:.7}
+@media(prefers-color-scheme:dark){.hero::before{content:"🌙"}}
 .hero .wrap{position:relative;z-index:1}
 .hero h1{font-size:clamp(3rem,10vw,6rem);letter-spacing:-.03em}
-.hero .sub{font-size:clamp(1.05rem,2.4vw,1.4rem);max-width:40rem;margin:1rem 0 1.8rem;color:#3d3026}
+.hero .sub{font-size:clamp(1.05rem,2.4vw,1.4rem);max-width:40rem;margin:1rem 0 1.8rem}
 .hero .row{display:flex;flex-wrap:wrap;gap:.8rem;align-items:center}
 .pills{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.4rem;list-style:none}
-.pills li{background:#fff9;border-radius:99px;padding:.15rem .85rem;font:600 .82rem var(--mono);color:var(--leaf)}
+.pills li{background:color-mix(in oklch,var(--card) 65%,transparent);border-radius:99px;padding:.15rem .85rem;font:600 .82rem var(--mono);color:var(--leaf)}
 .forest{position:absolute;inset:auto 0 0;width:100%;height:clamp(10rem,24vw,16rem)}
-.forest .b{stroke:var(--bark);stroke-linecap:round}
-.forest .l{fill:var(--leaf2)}.forest .k{fill:var(--sky2)}.forest .g{fill:var(--bark2)}.forest .h{fill:#cfe5c4}
-.forest .m{fill:none;stroke:var(--sky);stroke-width:2;stroke-dasharray:3 6}
+.forest .t{transform-box:fill-box;transform-origin:50% 100%;rotate:var(--sway)}
+.forest .b{stroke:var(--f-bark);stroke-linecap:round}
+.forest .l{fill:var(--f-leaf2)}.forest .k{fill:var(--sky2)}.forest .g{fill:var(--soil)}
+.forest .h{fill:color-mix(in oklch,var(--f-leaf2) 30%,var(--paper))}
+.forest .m{fill:none;stroke:var(--sky2);stroke-width:2;stroke-dasharray:3 6}
 
 /* figures */
 .fig{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:1rem;overflow-x:auto}
 .fig svg{display:block;width:100%;min-width:38rem;height:auto}
-.nd text{font:700 14px system-ui;fill:#fff;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.nd text{font:700 14px system-ui;fill:#fff;text-anchor:middle;dominant-baseline:central}
 .nd .sub{font:500 10.5px var(--mono);opacity:.9}
-.nd.root rect{fill:var(--bark)}.nd.comp rect{fill:var(--leaf)}.nd.pub rect{fill:var(--leaf2)}.nd.code rect{fill:var(--bark2)}
-.nd.know rect{fill:var(--moss);stroke:var(--leaf);stroke-width:2}.nd.know text{fill:var(--ink)}
-.te{fill:none;stroke:var(--bark2);stroke-width:3;stroke-linecap:round}
+.nd.root rect{fill:var(--f-bark)}.nd.comp rect{fill:var(--f-leaf)}.nd.pub rect{fill:var(--f-leaf2)}.nd.code rect{fill:var(--f-bark2)}
+.nd.know rect{fill:var(--moss);stroke:var(--f-leaf);stroke-width:2}.nd.know text{fill:var(--ink)}
+.te{fill:none;stroke:var(--f-bark2);stroke-width:3;stroke-linecap:round}
 .le{fill:none;stroke:var(--link);stroke-width:2.5;stroke-dasharray:6 6;marker-end:url(#ar)}
 .ah{fill:var(--link)}
 .el{font:600 11px var(--mono);fill:var(--link);text-anchor:middle;paint-order:stroke;stroke:var(--card);stroke-width:5px}
@@ -90,18 +149,19 @@ header nav a:hover{background:var(--moss)}
 /* steps, layers, chips */
 .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:1rem;list-style:none;counter-reset:s}
 .steps li{counter-increment:s;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:1.1rem 1.3rem}
-.steps li::before{content:counter(s);display:grid;place-items:center;width:2.2rem;height:2.2rem;border-radius:50%;background:var(--leaf);color:#fff;font-weight:800;margin-bottom:.5rem}
+.steps li::before{content:counter(s);display:grid;place-items:center;width:2.2rem;height:2.2rem;border-radius:50%;background:var(--f-leaf);color:#fff;font-weight:800;margin-bottom:.5rem}
 .steps p{color:var(--mute);font-size:.95rem}
 .layers{display:flex;flex-direction:column-reverse;gap:.5rem;list-style:none}
 .layers li{display:flex;align-items:center;gap:1rem;background:var(--card);border:1px solid var(--line);border-radius:1.6rem;padding:.5rem 1.2rem .5rem .5rem}
-.layers .n{flex:none;display:grid;place-items:center;width:2.4rem;height:2.4rem;border-radius:50%;color:#fff;font-weight:800;background:color-mix(in oklab,var(--leaf) calc(var(--i)*12.5%),var(--bark))}
+.layers .n{flex:none;display:grid;place-items:center;width:2.4rem;height:2.4rem;border-radius:50%;color:#fff;font-weight:800;background:color-mix(in oklch,var(--f-leaf) calc(var(--i)*12.5%),var(--f-bark))}
 .layers small{display:block;color:var(--mute)}
-.chips{display:flex;flex-wrap:wrap;gap:.4rem;list-style:none;margin-top:.7rem}
-.chips li{background:var(--sky);color:#1d4258;border-radius:99px;padding:.1rem .75rem;font-size:.84rem;font-weight:600}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(min(100%,21rem),1fr))}
+.chips{display:flex;flex-wrap:wrap;align-content:flex-start;gap:.4rem;list-style:none;margin-top:.7rem}
+.chips li{background:var(--sky);color:var(--ink);border-radius:99px;padding:.1rem .75rem;font-size:.84rem;font-weight:600}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:1rem;margin-top:1.2rem;text-align:center}
 .stats div{background:var(--card);border-radius:var(--r);padding:1rem;border:1px solid var(--line)}
-.stats b{display:block;font-size:2rem;color:var(--leaf)}
-.stats span{color:var(--mute);font-size:.9rem}
+.stats b{display:inline-block;font-size:2rem;color:var(--leaf);font-variant-numeric:tabular-nums}
+.stats span{display:block;color:var(--mute);font-size:.9rem}
 .note{background:var(--card);border-left:8px solid var(--sky2);border-radius:0 var(--r) var(--r) 0;padding:1rem 1.3rem;margin-top:1.2rem;color:var(--mute);font-size:.95rem}
 table{width:100%;border-collapse:collapse;font-size:.9rem;background:var(--card);border-radius:var(--r);overflow:hidden}
 td,th{text-align:left;padding:.5rem .9rem;border-bottom:1px solid var(--line)}
@@ -110,34 +170,21 @@ th{background:var(--moss);color:var(--bark)}
 .decl li{break-inside:avoid;margin-bottom:.6rem}
 .decl b{color:var(--bark)}
 
-footer{background:var(--bark);color:#f6efe2;border-radius:2rem 2rem 0 0;margin:3rem .6rem 0;padding:0 0 2.5rem;text-align:center;overflow:hidden}
+footer{background:var(--soil);color:oklch(95% .02 85);border-radius:2rem 2rem 0 0;margin:3rem .6rem 0;padding:0 0 2.5rem;text-align:center;overflow:hidden}
 .grove{display:flex;justify-content:center;align-items:flex-end;gap:.2rem;padding:1.2rem 1rem 0;margin-bottom:1rem;line-height:1;overflow:hidden}
-.grove span{display:inline-block;transform-origin:50% 100%;animation:sway var(--s,6s) ease-in-out var(--d,0s) infinite alternate}
-footer a{color:var(--sky);margin:0 .6rem}
+.grove span{display:inline-block;transform-origin:50% 100%;rotate:var(--sway)}
+footer a{color:oklch(86% .07 230);margin:0 .6rem}
+footer .wrap>*{justify-self:center}
 footer p+p{margin-top:.8rem;opacity:.8}
-
-/* wind & breath */
-@keyframes sway{from{transform:rotate(-2deg)}to{transform:rotate(2deg)}}
-@keyframes flow{to{stroke-dashoffset:-36}}
-@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
-@keyframes drift{to{transform:translateX(3rem)}}
-.forest .t{transform-box:fill-box;transform-origin:50% 100%;animation:sway var(--s,6s) ease-in-out var(--d,0s) infinite alternate}
-.forest .m{animation:flow 5s linear infinite}
-.le{animation:flow 2.4s linear infinite}
-.stats div:first-child b{display:inline-block;animation:breathe 5s ease-in-out infinite}
-.hero::before{content:"☁️";position:absolute;top:18%;right:12%;font-size:3rem;opacity:.7;animation:drift 18s ease-in-out infinite alternate}
-.card,.steps li{transition:transform .25s}
-.card:hover,.steps li:hover{transform:translateY(-3px) rotate(-.4deg)}
-@media(prefers-reduced-motion:reduce){*,::before{animation:none!important;transition:none!important}}
-@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
 <body>
+<div class="grow" aria-hidden="true"></div>
 
 <header>
   <b><span class="logo" aria-hidden="true">🌲</span>git-forest</b>
-  <nav aria-label="Sections">
-    <a href="#plant">Plant</a><a href="#graph">Graph</a><a href="#mdld">mdld-parse</a><a href="#layers">Layers</a><a href="#components">Components</a><a href="#kernel">Kernel</a><a href="#deploy">Deploy</a>
+  <nav aria-label="Chapters">
+    <a href="#plant">Seed</a><a href="#soil">Soil</a><a href="#layers">Roots</a><a href="#components">Trees</a><a href="#graph">Mycelium</a><a href="#mdld">mdld-parse</a><a href="#kernel">Breath</a><a href="#deploy">Graft</a>
   </nav>
 </header>
 
@@ -157,10 +204,10 @@ footer p+p{margin-top:.8rem;opacity:.8}
 
 <main>
 
-<section id="plant" class="alt">
+<section id="plant">
   <div class="wrap">
-    <p class="kicker">Plant</p>
-    <h2>One file is the whole seed</h2>
+    <p class="kicker">I · 🌰 Seed</p>
+    <h2>Every forest starts with one file</h2>
     <p class="lede">git-forest is a pattern before it is a package. The kernel is a single <code>index.js</code> with no <code>node_modules</code>: read it in an afternoon, change it, fork it. <code>npx</code> is only a shortcut for the same thing.</p>
     <ol class="steps">
       <li><h3>Copy</h3><p>Put <code>index.js</code> and <code>.gitignore</code> in an empty folder. That folder is your forest, and the kernel is yours to edit.</p></li>
@@ -182,16 +229,89 @@ mkdir hello &amp;&amp; cat &gt; hello/index.js &lt;&lt;'EOF'
 createServer((req, res) =&gt; res.end(<span class="s">'🌲 hello from the forest'</span>))
   .listen(process.env.SOCKET_PATH);   <span class="c">// listening on the socket = ready</span>
 EOF
-<span class="c"># commit &amp; push (see Deploy): only this worker is swapped, nothing restarts</span></code></pre>
+<span class="c"># commit &amp; push (see Graft): only this worker is swapped, nothing restarts</span></code></pre>
     <p class="note">Requires Node.js ≥ 22 and Git. That is the entire toolchain: no framework, no database, no process manager, no CI.</p>
+    <a class="next" href="#soil">Next: the soil it grows in →</a>
+  </div>
+</section>
+
+<section id="soil" class="alt">
+  <div class="wrap">
+    <p class="kicker">II · 🪱 Soil</p>
+    <h2>Before anything grows, there is ground</h2>
+    <p class="lede">Every file belongs to one of three substances, and <code>.gitignore</code> is the policy that draws the line between them. Anything not ignored is committed; anything ignored stays sovereign to the local container.</p>
+    <div class="grid">
+      <div class="card" style="--c:var(--f-bark)"><h3>Code · the DNA</h3><p>Logic that transforms inputs. Versioned.</p><ul><li>index.js</li><li>public/styles.css</li></ul></div>
+      <div class="card" style="--c:var(--f-leaf)"><h3>Knowledge · the rings</h3><p>Data given context: semantic and auditable. Versioned.</p><ul><li>catalog/offers.md</li><li>content/**/*.md</li></ul></div>
+      <div class="card" style="--c:var(--sky2)"><h3>Soil · the nutrients</h3><p>Raw, derivable accumulation. Ephemeral and ignored.</p><ul><li>users.json</li><li>sessions/</li><li>votes.jsonl</li></ul></div>
+    </div>
+    <p class="note"><b>Photosynthesis:</b> components absorb raw data (soil), apply logic (code) and elevate it into auditable history (knowledge). <code>public/</code> is the grass cover: static files served directly, safe for crawlers, and the point where components emerge.</p>
+    <a class="next" href="#layers">Next: what holds it up →</a>
+  </div>
+</section>
+
+<section id="layers">
+  <div class="wrap">
+    <p class="kicker">III · 🌱 Roots</p>
+    <h2>Eight layers hold it up</h2>
+    <p class="lede">Every byte can be explained by one of eight layers. Read from the bottom up: the will at the roots, identification in the canopy.</p>
+    <ol class="layers">
+      <li style="--i:1"><span class="n">1</span><div><b>The Will</b><small>Node.js logic and state, zero dependencies</small></div></li>
+      <li style="--i:2"><span class="n">2</span><div><b>The Projection</b><small>HTML + CSS + vanilla JS, the ephemeral UI</small></div></li>
+      <li style="--i:3"><span class="n">3</span><div><b>The Membrane</b><small>Unix domain sockets: routing and isolation</small></div></li>
+      <li style="--i:4"><span class="n">4</span><div><b>The Truth</b><small>The filesystem: code, knowledge and soil as plain text</small></div></li>
+      <li style="--i:5"><span class="n">5</span><div><b>The Memory</b><small>Git: autonomic, append-only history</small></div></li>
+      <li style="--i:6"><span class="n">6</span><div><b>The Seeds</b><small>MD-LD: portable specifications that can regrow a component</small></div></li>
+      <li style="--i:7"><span class="n">7</span><div><b>Authentication</b><small>A device proves itself with an HMAC-signed HttpOnly cookie</small></div></li>
+      <li style="--i:8"><span class="n">8</span><div><b>Identification</b><small>A device is linked to a person through a simple mapping</small></div></li>
+    </ol>
+    <a class="next" href="#components">Next: the trees →</a>
+  </div>
+</section>
+
+<section id="components" class="alt">
+  <div class="wrap">
+    <p class="kicker">IV · 🌳 Trees</p>
+    <h2>A tree is a folder with an index.js</h2>
+    <p class="lede">An autonomous agent with three obligations, and nothing else to learn.</p>
+    <div class="grid g2">
+      <div class="card"><h3>1 · Membrane</h3><p>The kernel strips the prefix: <code>/poll/vote</code> arrives as <code>/vote</code>. Use relative URLs and the folder can be renamed, moved or tunnelled.</p></div>
+      <div class="card"><h3>2 · Lifecycle</h3><p>Listen on <code>SOCKET_PATH</code>. The kernel senses readiness with backoff, swaps atomically, and keeps the old version if yours fails to boot.</p></div>
+      <div class="card"><h3>3 · Teleology</h3><p>Just write files. Components never run <code>git</code>; the kernel breathes changes into history on its own.</p></div>
+      <div class="card" style="--c:var(--sky2)"><h3>Mycelium</h3><p>Every request carries <code>x-forest-device-id</code>, and <code>x-forest-user-id</code> when the device is linked in <code>users.json</code>. No lookups, no sessions.</p></div>
+    </div>
+<pre><code><span class="c">// poll/index.js — a complete tree</span>
+<span class="k">import</span> { createServer } <span class="k">from</span> <span class="s">'node:http'</span>;
+<span class="k">import</span> { appendFile, mkdir } <span class="k">from</span> <span class="s">'node:fs/promises'</span>;
+<span class="k">import</span> { join } <span class="k">from</span> <span class="s">'node:path'</span>;
+
+<span class="k">const</span> ROOT = join(process.env.COMPONENT_DIR, <span class="s">'..'</span>);
+
+<span class="k">const</span> server = createServer(<span class="k">async</span> (req, res) =&gt; {
+  <span class="k">const</span> user = req.headers[<span class="s">'x-forest-user-id'</span>];          <span class="c">// from the mycelium</span>
+  <span class="k">if</span> (!user) <span class="k">return</span> res.writeHead(401).end(<span class="s">'Please log in'</span>);
+
+  <span class="k">const</span> dir = join(ROOT, <span class="s">'notes'</span>);
+  <span class="k">await</span> mkdir(dir, { recursive: <span class="k">true</span> });
+  <span class="k">await</span> appendFile(join(dir, `${user}.md`), <span class="s">'\n## New entry\n'</span>);  <span class="c">// write to the soil</span>
+  res.end(<span class="s">'Saved. &lt;a href="./"&gt;back&lt;/a&gt;'</span>);                     <span class="c">// relative paths!</span>
+});
+
+server.listen(process.env.SOCKET_PATH);                      <span class="c">// listening = ready</span>
+process.on(<span class="s">'SIGTERM'</span>, () =&gt; {
+  server.close(() =&gt; process.exit(0));
+  setTimeout(() =&gt; process.exit(0), 3000).unref();
+});</code></pre>
+    <p class="note"><b>Two strands:</b> <code>index.js</code> is the behavioural strand, an optional <code>index.md</code> in MD-LD is the declarative strand. Either can be regenerated from the other, which is what makes a component a portable seed.</p>
+    <a class="next" href="#graph">Next: how trees connect →</a>
   </div>
 </section>
 
 <section id="graph">
   <div class="wrap">
-    <p class="kicker">Graph = tree</p>
+    <p class="kicker">V · 🍄 Mycelium</p>
     <h2>A tree of folders. A graph of links. A forest of both.</h2>
-    <p class="lede">Directories give you hierarchy: one parent, many children. Markdown-linked data adds the edges that cross it. Separate trees, sharing soil and mycelium: that is a forest, and it needs no database to be one.</p>
+    <p class="lede">Directories give you hierarchy: one parent, many children. Markdown-linked data adds the edges that cross it, the way fungal threads join separate trees underground. Trees plus shared soil plus links: that is a forest, and it needs no database to be one.</p>
     <div class="fig">
       <svg viewBox="0 0 760 360" role="img" aria-label="A forest root with a kernel, a static folder and three component folders; dashed blue links connect their knowledge files">
         <defs><marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path class="ah" d="M0 0L8 4L0 8z"/></marker></defs>
@@ -222,18 +342,19 @@ EOF
       </svg>
     </div>
     <ul class="legend">
-      <li><i style="--c:var(--bark2)"></i>tree edge: a folder contains a file</li>
+      <li><i style="--c:var(--f-bark2)"></i>tree edge: a folder contains a file</li>
       <li><i class="dash" style="--c:var(--link)"></i>graph edge: a <code>?predicate</code> link written in Markdown</li>
-      <li><i style="--c:var(--leaf)"></i>component (agent)</li>
-      <li><i style="--c:var(--moss);border:2px solid var(--leaf)"></i>knowledge file</li>
+      <li><i style="--c:var(--f-leaf)"></i>component (agent)</li>
+      <li><i style="--c:var(--moss);border:2px solid var(--f-leaf)"></i>knowledge file</li>
     </ul>
     <p class="note">Illustrative layout. The folders are the hierarchy; the link edges live inside the Markdown files as annotations, so moving a folder never breaks the graph.</p>
+    <a class="next" href="#mdld">Next: the thread itself →</a>
   </div>
 </section>
 
 <section id="mdld" class="alt">
   <div class="wrap">
-    <p class="kicker">Graph database</p>
+    <p class="kicker">V · 🍄 Mycelium · the database</p>
     <h2>mdld-parse: the database is a folder of Markdown</h2>
     <p class="lede">No SQLite, no ORM, no server. <a href="https://mdld.js.org/">MD-LD</a> turns annotated Markdown into RDF quads and back, and <code>mdld-parse.js</code> is one zero-dependency file (about 24 KB gzipped). Copy it into <code>public/</code> and every component can query the forest's knowledge with plain array methods.</p>
     <div class="split">
@@ -266,88 +387,20 @@ Sold at [the counter] {+cat:counter ?cat:soldAt label}.</code></pre>
     </div>
     <div class="grid" style="margin-top:1.2rem">
       <div class="card"><h3>Trees are graphs</h3><p>A heading with <code>{=iri}</code> is a node. Nesting is the tree; <code>?predicate</code> links are the extra edges that turn a tree into a forest.</p></div>
-      <div class="card" style="--c:var(--bark2)"><h3>Git is the history</h3><p>Every edit to the graph is a text diff. <code>merge()</code> combines append-only documents, so branches and backups just work.</p></div>
+      <div class="card" style="--c:var(--f-bark2)"><h3>Git is the history</h3><p>Every edit to the graph is a text diff. <code>merge()</code> combines append-only documents, so branches and backups just work.</p></div>
       <div class="card" style="--c:var(--sky2)"><h3>Round-trip safe</h3><p><code>parse</code> ↔ <code>generate</code>, plus <code>render</code> ↔ <code>deconstruct</code> for lossless HTML. A <code>&lt;quad-graph&gt;</code> element can draw any result as a force-directed graph.</p></div>
     </div>
     <p class="note">Licensing: mdld-parse is published as source under the author's terms (individuals, research, education and non-commercial use are welcome; contact the author for commercial use). Check <a href="https://mdld.js.org/">mdld.js.org</a> before shipping it in a product. The kernel itself never needs it.</p>
+    <a class="next" href="#kernel">Next: the forest breathes →</a>
   </div>
 </section>
 
-<section id="layers">
+<section id="kernel">
   <div class="wrap">
-    <p class="kicker">Eight layers</p>
-    <h2>Roots to canopy</h2>
-    <p class="lede">Every byte can be explained by one of eight layers. Read from the bottom up: the will at the roots, identification in the canopy.</p>
-    <ol class="layers">
-      <li style="--i:1"><span class="n">1</span><div><b>The Will</b><small>Node.js logic and state, zero dependencies</small></div></li>
-      <li style="--i:2"><span class="n">2</span><div><b>The Projection</b><small>HTML + CSS + vanilla JS, the ephemeral UI</small></div></li>
-      <li style="--i:3"><span class="n">3</span><div><b>The Membrane</b><small>Unix domain sockets: routing and isolation</small></div></li>
-      <li style="--i:4"><span class="n">4</span><div><b>The Truth</b><small>The filesystem: code, knowledge and soil as plain text</small></div></li>
-      <li style="--i:5"><span class="n">5</span><div><b>The Memory</b><small>Git: autonomic, append-only history</small></div></li>
-      <li style="--i:6"><span class="n">6</span><div><b>The Seeds</b><small>MD-LD: portable specifications that can regrow a component</small></div></li>
-      <li style="--i:7"><span class="n">7</span><div><b>Authentication</b><small>A device proves itself with an HMAC-signed HttpOnly cookie</small></div></li>
-      <li style="--i:8"><span class="n">8</span><div><b>Identification</b><small>A device is linked to a person through a simple mapping</small></div></li>
-    </ol>
-  </div>
-</section>
-
-<section id="soil" class="alt">
-  <div class="wrap">
-    <p class="kicker">Soil</p>
-    <h2>Code, Knowledge, Soil</h2>
-    <p class="lede">Every file belongs to one of three substances, and <code>.gitignore</code> is the policy that draws the line between them. Anything not ignored is committed; anything ignored stays sovereign to the local container.</p>
-    <div class="grid">
-      <div class="card" style="--c:var(--bark)"><h3>Code · the DNA</h3><p>Logic that transforms inputs. Versioned.</p><ul><li>index.js</li><li>public/styles.css</li></ul></div>
-      <div class="card" style="--c:var(--leaf)"><h3>Knowledge · the rings</h3><p>Data given context: semantic and auditable. Versioned.</p><ul><li>catalog/offers.md</li><li>content/**/*.md</li></ul></div>
-      <div class="card" style="--c:var(--sky2)"><h3>Soil · the nutrients</h3><p>Raw, derivable accumulation. Ephemeral and ignored.</p><ul><li>users.json</li><li>sessions/</li><li>votes.jsonl</li></ul></div>
-    </div>
-    <p class="note"><b>Photosynthesis:</b> components absorb raw data (soil), apply logic (code) and elevate it into auditable history (knowledge). <code>public/</code> is the grass cover: static files served directly, safe for crawlers, and the point where components emerge.</p>
-  </div>
-</section>
-
-<section id="components">
-  <div class="wrap">
-    <p class="kicker">Components</p>
-    <h2>A component is a folder with an index.js</h2>
-    <p class="lede">A tree in the forest: an autonomous agent with three obligations, and nothing else to learn.</p>
-    <div class="grid">
-      <div class="card"><h3>1 · Membrane</h3><p>The kernel strips the prefix: <code>/poll/vote</code> arrives as <code>/vote</code>. Use relative URLs and the folder can be renamed, moved or tunnelled.</p></div>
-      <div class="card"><h3>2 · Lifecycle</h3><p>Listen on <code>SOCKET_PATH</code>. The kernel senses readiness with backoff, swaps atomically, and keeps the old version if yours fails to boot.</p></div>
-      <div class="card"><h3>3 · Teleology</h3><p>Just write files. Components never run <code>git</code>; the kernel breathes changes into history on its own.</p></div>
-      <div class="card" style="--c:var(--sky2)"><h3>Mycelium</h3><p>Every request carries <code>x-forest-device-id</code>, and <code>x-forest-user-id</code> when the device is linked in <code>users.json</code>. No lookups, no sessions.</p></div>
-    </div>
-<pre><code><span class="c">// poll/index.js — a complete tree</span>
-<span class="k">import</span> { createServer } <span class="k">from</span> <span class="s">'node:http'</span>;
-<span class="k">import</span> { appendFile, mkdir } <span class="k">from</span> <span class="s">'node:fs/promises'</span>;
-<span class="k">import</span> { join } <span class="k">from</span> <span class="s">'node:path'</span>;
-
-<span class="k">const</span> ROOT = join(process.env.COMPONENT_DIR, <span class="s">'..'</span>);
-
-<span class="k">const</span> server = createServer(<span class="k">async</span> (req, res) =&gt; {
-  <span class="k">const</span> user = req.headers[<span class="s">'x-forest-user-id'</span>];          <span class="c">// from the mycelium</span>
-  <span class="k">if</span> (!user) <span class="k">return</span> res.writeHead(401).end(<span class="s">'Please log in'</span>);
-
-  <span class="k">const</span> dir = join(ROOT, <span class="s">'notes'</span>);
-  <span class="k">await</span> mkdir(dir, { recursive: <span class="k">true</span> });
-  <span class="k">await</span> appendFile(join(dir, `${user}.md`), <span class="s">'\n## New entry\n'</span>);  <span class="c">// write to the soil</span>
-  res.end(<span class="s">'Saved. &lt;a href="./"&gt;back&lt;/a&gt;'</span>);                     <span class="c">// relative paths!</span>
-});
-
-server.listen(process.env.SOCKET_PATH);                      <span class="c">// listening = ready</span>
-process.on(<span class="s">'SIGTERM'</span>, () =&gt; {
-  server.close(() =&gt; process.exit(0));
-  setTimeout(() =&gt; process.exit(0), 3000).unref();
-});</code></pre>
-    <p class="note"><b>Two strands:</b> <code>index.js</code> is the behavioural strand, an optional <code>index.md</code> in MD-LD is the declarative strand. Either can be regenerated from the other, which is what makes a component a portable seed.</p>
-  </div>
-</section>
-
-<section id="kernel" class="alt">
-  <div class="wrap">
-    <p class="kicker">Kernel</p>
-    <h2>The kernel in four acts</h2>
-    <p class="lede">The kernel describes itself in <a href="index.md">index.md</a>, written in MD-LD. Each role declares its trigger, path, input, output, prerequisite and plan, so the documentation is also a graph you can parse.</p>
-    <div class="grid">
+    <p class="kicker">VI · 🌬️ Breath</p>
+    <h2>The forest tends itself</h2>
+    <p class="lede">The kernel describes itself in <a href="index.md">index.md</a>, written in MD-LD, in four acts. Each role declares its trigger, path, input, output, prerequisite and plan, so the documentation is also a graph you can parse.</p>
+    <div class="grid g2">
       <div class="card"><h3>I · Meeting the world</h3><p>Decide where every incoming byte goes.</p>
         <ul class="chips"><li>serve static</li><li>route to component</li><li>git HTTP backend</li><li>websocket upgrade</li></ul></div>
       <div class="card"><h3>II · Knowing who and what</h3><p>Device identity, device map, history.</p>
@@ -363,26 +416,28 @@ process.on(<span class="s">'SIGTERM'</span>, () =&gt; {
       <div><b>1 h</b><span>quiet: deep sleep, repack objects</span></div>
     </div>
     <p class="note">Commit messages are derived from paths alone: <code>users/alice/payments.md</code> becomes <i>user alice payments</i>, and <code>users/index.js</code> becomes <i>deploy users</i>. The forest does not crash. It exhales.</p>
+    <a class="next" href="#forests">Next: who lives here →</a>
   </div>
 </section>
 
-<section id="forests">
+<section id="forests" class="alt">
   <div class="wrap">
-    <p class="kicker">Forests</p>
+    <p class="kicker">VII · 🏡 Forests</p>
     <h2>Small forests for real people</h2>
     <p class="lede">When a component is a few hundred lines and a Markdown seed, software becomes affordable for communities that would never commission it. Simple is good enough in 95% of cases.</p>
     <div class="grid">
       <div class="card"><h3>The family forest</h3><p>A $5 VPS or a Raspberry Pi in the closet.</p><ul><li>notes/ recipes/ things/</li><li>gallery/ calendar/</li></ul></div>
-      <div class="card" style="--c:var(--bark2)"><h3>The coffee shop</h3><p>A laptop behind the counter.</p><ul><li>inventory/ suppliers/</li><li>shifts/ recipes/ customers/</li></ul></div>
+      <div class="card" style="--c:var(--f-bark2)"><h3>The coffee shop</h3><p>A laptop behind the counter.</p><ul><li>inventory/ suppliers/</li><li>shifts/ recipes/ customers/</li></ul></div>
       <div class="card" style="--c:var(--sky2)"><h3>The school</h3><p>Courses, students and video on one VPS.</p><ul><li>content/ catalog/ video/</li><li>user/ waitlist/</li></ul></div>
     </div>
     <p class="note">When the kids grow up and move out, they fork the forest and take their branch with them. No export scripts, just <code>git clone</code>.</p>
+    <a class="next" href="#deploy">Next: add a branch →</a>
   </div>
 </section>
 
-<section id="deploy" class="alt">
+<section id="deploy">
   <div class="wrap">
-    <p class="kicker">Deploy</p>
+    <p class="kicker">VIII · ✂️ Graft</p>
     <h2>Push to the forest</h2>
     <p class="lede">The server is the Git remote. A <code>post-receive</code> hook inspects the diff: component changes hot-swap just that worker; a change to the root <code>index.js</code> triggers a graceful container restart.</p>
     <div class="split">
@@ -415,12 +470,13 @@ ENTRYPOINT ["sh", "-c", "\
       <tr><td><code>FOREST_BREATH_MS</code></td><td>5000</td><td>Commit interval</td></tr>
     </table>
     <p class="note">Security in brief: timing-safe secret checks, rate-limited Git auth, <code>.git</code>, <code>.env</code> and the kernel itself are never served, each component is its own process behind a Unix socket, and a crashing build keeps the previous version alive.</p>
+    <a class="next" href="#declaration">Epilogue →</a>
   </div>
 </section>
 
-<section id="declaration">
+<section id="declaration" class="alt">
   <div class="wrap">
-    <p class="kicker">Declaration</p>
+    <p class="kicker">📜 Epilogue</p>
     <h2>What we hold to be self-evident</h2>
     <ol class="decl">
       <li><b>Software should be owned</b>, not rented.</li>
@@ -438,7 +494,7 @@ ENTRYPOINT ["sh", "-c", "\
 </main>
 
 <footer>
-  <div class="grove" aria-hidden="true"><span style="font-size:1.6rem;--d:-1s;--s:5s">🌲</span><span style="font-size:2.4rem;--d:-3s;--s:4s">🌲</span><span style="font-size:1.8rem;--d:-2s;--s:6s">🌲</span><span style="font-size:3rem;--d:-5s;--s:6s">🌲</span><span style="font-size:2rem;--d:-4s;--s:5s">🌲</span><span style="font-size:2.8rem;--d:-1s;--s:5s">🌲</span><span style="font-size:1.7rem;--d:-6s;--s:4s">🌲</span><span style="font-size:2.6rem;--d:-2s;--s:6s">🌲</span><span style="font-size:2rem;--d:-5s;--s:6s">🌲</span><span style="font-size:1.6rem;--d:-3s;--s:4s">🌲</span></div>
+  <div class="grove" aria-hidden="true"><span style="font-size:1.6rem;--k:1">🌲</span><span style="font-size:2.4rem;--k:.8">🌲</span><span style="font-size:1.8rem;--k:1.3">🌲</span><span style="font-size:3rem;--k:.7">🌲</span><span style="font-size:2rem;--k:1.1">🌲</span><span style="font-size:2.8rem;--k:.9">🌲</span><span style="font-size:1.7rem;--k:1.4">🌲</span><span style="font-size:2.6rem;--k:.8">🌲</span><span style="font-size:2rem;--k:1.2">🌲</span><span style="font-size:1.6rem;--k:1">🌲</span></div>
   <div class="wrap">
     <p><b>🌲 Plant the seed. Watch the forest grow.</b></p>
     <p><a href="https://github.com/davay42/git-forest">GitHub</a><a href="https://www.npmjs.com/package/@davay/git-forest">npm</a><a href="https://mdld.js.org/">MD-LD</a><a href="index.md">index.md</a></p>
@@ -448,7 +504,8 @@ ENTRYPOINT ["sh", "-c", "\
 
 <script>
 /* Decorative forest: every tree is a small graph (branches = edges, leaves = nodes);
-   dashed blue arcs underground are the links that make the trees one forest. */
+   dashed arcs underground are the links that make the trees one forest.
+   Each tree sways by the shared --wind/--gust variables, scaled by its own --k. */
 (()=>{
   const f=document.querySelector('.forest');if(!f)return;
   let s=2024;const R=()=>(s=s*16807%2147483647)/2147483647;
@@ -460,7 +517,7 @@ ENTRYPOINT ["sh", "-c", "\
     g(X,Y,a-.25-R()*.35,l*.78,d-1);g(X,Y,a+.25+R()*.35,l*.78,d-1);
     if(R()<.3)g(X,Y,a+(R()-.5)*.3,l*.7,d-1);
   };
-  for(let i=0;i<n;i++){const x=70+i*(1060/(n-1))+R()*30-15;xs.push(x);t+=`<g class="t" style="--d:-${(R()*6).toFixed(1)}s;--s:${(4+R()*3).toFixed(1)}s">`;g(x,262,(R()-.5)*.2,24+R()*22,5);t+='</g>'}
+  for(let i=0;i<n;i++){const x=70+i*(1060/(n-1))+R()*30-15;xs.push(x);t+=`<g class="t" style="--k:${(.6+R()*.9).toFixed(2)}">`;g(x,262,(R()-.5)*.2,24+R()*22,5);t+='</g>'}
   t+='<path class="g" d="M0 258Q200 246 420 258T820 252T1200 258V300H0Z"/>';
   xs.forEach((x,i)=>{
     if(xs[i+1])m+=`<path class="m" d="M${x|0} 272Q${((x+xs[i+1])/2)|0} ${(294+R()*6)|0} ${xs[i+1]|0} 272"/>`;
