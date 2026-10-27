@@ -259,7 +259,7 @@ function processIdentity(req, res) {
     needsRenewal = true;
   }
 
-  if (needsRenewal) {
+  if (needsRenewal && res) {
     const newToken = `${deviceId}.${issuedAt}.${signDevice(deviceId, issuedAt)}`;
     const isSecure = req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https';
     const maxAgeSeconds = MAX_AGE_DAYS * 24 * 60 * 60;
