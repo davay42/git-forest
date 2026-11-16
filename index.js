@@ -41,9 +41,9 @@ const MAX_AGE_DAYS = envInt('AUTH_MAX_AGE_DAYS', 90);
 const RENEWAL_WINDOW_DAYS = envInt('AUTH_RENEWAL_WINDOW_DAYS', 30);
 
 // ─── BREATHING CONFIGURATION ───────────────────────────────────────────────
-const BREATH_MS = envInt('BREATH_MS', 5000);
-const SLEEP_AFTER_MS = envInt('SLEEP_AFTER_MS', 300000);
-const DEEP_SLEEP_AFTER_MS = envInt('DEEP_SLEEP_AFTER_MS', 3600000);
+const BREATH_MS = envInt('BREATH_MS', 20 * 1000);
+const SLEEP_AFTER_MS = envInt('SLEEP_AFTER_MS', 2 * 60 * 1000);
+const DEEP_SLEEP_AFTER_MS = envInt('DEEP_SLEEP_AFTER_MS', 10 * 60 * 1000);
 
 // ─── GIT HTTP BACKEND DISCOVERY ────────────────────────────────────────────
 function discoverGitBackend() {
@@ -259,12 +259,12 @@ function processIdentity(req, res) {
     needsRenewal = true;
   }
 
-  if (needsRenewal && res) {
+  if (needsRenewal) {
     const newToken = `${deviceId}.${issuedAt}.${signDevice(deviceId, issuedAt)}`;
     const isSecure = req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https';
     const maxAgeSeconds = MAX_AGE_DAYS * 24 * 60 * 60;
 
-    res.setHeader('Set-Cookie',
+    res && res.setHeader('Set-Cookie',
       `${COOKIE_NAME}=${newToken}; HttpOnly; ${isSecure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${maxAgeSeconds}`
     );
   }
@@ -670,7 +670,13 @@ const server = createServer(async (req, res) => {
       return res.end(JSON.stringify(status, null, 2));
     }
 
-    if (path.startsWith("/git")) return handleGit(req, res, ip);
+    if (path.startsWith("/git")) {
+      if (!GIT_SECRET) {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        return res.end("Not Found");
+      }
+      return handleGit(req, res, ip);
+    }
 
     const segment = path.split("/")[1];
     if (segment && components.has(segment)) {
