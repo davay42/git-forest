@@ -1,0 +1,7 @@
+# ─── Soil (large binary, never committed) ───
+videos/
+uploads/
+
+# ─── Knowledge (committed, versioned) ───
+# library.md — the index of all videos (title, metadata, history)
+# index.js — the code
