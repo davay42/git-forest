@@ -244,10 +244,15 @@ function processIdentity(req, res) {
       const expectedSigBuffer = Buffer.from(expectedSig, 'utf8');
 
       if (timingSafeEqual(sigBuffer, expectedSigBuffer)) {
-        deviceId = dId;
-        issuedAt = parseInt(iAt, 10);
-        if (Date.now() - issuedAt > RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000) {
-          needsRenewal = true;
+        const tokenIssuedAt = Number(iAt);
+        const ageMs = Date.now() - tokenIssuedAt;
+        if (Number.isSafeInteger(tokenIssuedAt) && ageMs >= 0 && ageMs <= MAX_AGE_DAYS * 24 * 60 * 60 * 1000) {
+          deviceId = dId;
+          issuedAt = tokenIssuedAt;
+          if (ageMs > (MAX_AGE_DAYS - RENEWAL_WINDOW_DAYS) * 24 * 60 * 60 * 1000) {
+            needsRenewal = true;
+            issuedAt = Date.now();
+          }
         }
       }
     }
@@ -383,10 +388,24 @@ function killComponent(name) {
 // ─── STATIC FILE SERVER ────────────────────────────────────────────────────
 async function serveStatic(req, res) {
   const url = new URL(req.url, "http://localhost");
-  const safePath = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+  let decoded;
+  try {
+    decoded = decodeURIComponent(url.pathname);
+  } catch {
+    res.writeHead(400);
+    return res.end("Bad Request");
+  }
+  // Reject traversal segments after decoding — catches ..%2f, %2e%2e%2f, etc.
+  const segments = decoded.split('/').filter(Boolean);
+  if (segments.some(s => s === '..' || s === '.' || s.includes('\\'))) {
+    res.writeHead(403);
+    return res.end("Forbidden");
+  }
+  const safePath = segments.join('/');
   const filePath = join(PUBLIC_DIR, safePath);
 
-  if (!filePath.startsWith(PUBLIC_DIR)) {
+  // Boundary check with trailing separator — no prefix-sibling bypass
+  if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + '/')) {
     res.writeHead(403);
     return res.end("Forbidden");
   }
@@ -637,6 +656,11 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === "/_forest/status" && req.method === "GET") {
+      if (!isInternalCall) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        return res.end("Forbidden: Invalid status token");
+      }
+
       const uptime = Date.now() - startTime;
       const componentInfo = {};
       for (const [name, component] of components) {
