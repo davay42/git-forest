@@ -15,6 +15,7 @@ const PORT = parseInt(process.env.PORT) || 3000;
 const ROOT = process.cwd();
 const PUBLIC_DIR = join(ROOT, 'public');
 const GIT_SECRET = process.env.GIT_SECRET;
+const AUTONOMOUS_GIT = Boolean(GIT_SECRET);
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const GIT_BACKUP_URL = process.env.GIT_BACKUP_URL;
 const RELOAD_TOKEN = process.env.RELOAD_TOKEN || crypto.randomBytes(16).toString('hex');
@@ -944,7 +945,7 @@ function setupWebSocketUpgrade() {
 
 // ─── BOOT SEQUENCE ──────────────────────────────────────────────────────────
 async function boot() {
-  await healGitState();
+  if (AUTONOMOUS_GIT) await healGitState();
 
   const lockFiles = ['.git/index.lock', '.git/config.lock', '.git/HEAD.lock'];
   for (const lock of lockFiles) {
@@ -989,12 +990,16 @@ async function boot() {
     console.log(`[ready] http://localhost:${PORT} | components: ${[...components.keys()].join(", ") || "none"}`);
     console.log(`[security] Git Auth: ${GIT_SECRET ? 'ENABLED (Timing-Safe)' : 'DISABLED'} | Proxy Trust: ${TRUST_PROXY ? 'ON' : 'OFF'}`);
     console.log(`[git] HTTP Backend: ${GIT_HTTP_BACKEND}`);
-    console.log(`[breath] 🌬️ Autonomic Git management started (${BREATH_MS}ms breath, ${SLEEP_AFTER_MS}ms sleep)`);
+    if (AUTONOMOUS_GIT) {
+      console.log(`[breath] 🌬️ Autonomic Git management started (${BREATH_MS}ms breath, ${SLEEP_AFTER_MS}ms sleep)`);
+    } else {
+      console.log('[boot] 🌱 Dormant — no GIT_SECRET, Git is manual');
+    }
     console.log(`[boot] ⏱️  Component boot timeout: ${COMPONENT_BOOT_TIMEOUT_MS / 1000}s (exponential backoff)`);
   });
 
   setupWebSocketUpgrade();
-  startBreathing();
+  if (AUTONOMOUS_GIT) startBreathing();
 }
 
 boot();
