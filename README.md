@@ -329,7 +329,7 @@ const ledger = await readFile(`users/${userId}/payments.md`, 'utf8');
 
 ### Starter Templates
 
-The repo ships a `templates/` directory of ready-to-plant components — `blog`, `notes`, `video`, `tunnel`, `user`, `notify`, `test`, `test-identity`. Each is a complete working agent with its own README, seed files, and `.gitignore` marking its Soil. Copy one to the forest root, commit (or reload), and it mounts — every template's only external dependency is `public/mdld-parse.js`, the single-file MD-LD engine in the ground cover.
+The repo ships a `templates/` directory of ready-to-plant components — `blog`, `chat`, `eval`, `notes`, `video`, `tunnel`, `user`, `notify`, `test`, `test-identity`. Each is a complete working agent with its own README, seed files, and `.gitignore` marking its Soil. Copy one to the forest root, commit (or reload), and it mounts — every template's only external dependency is `public/mdld-parse.js`, the single-file MD-LD engine in the ground cover.
 
 ---
 
