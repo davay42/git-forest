@@ -1,0 +1,162 @@
+/* git-forest ground cover — shared component stylesheet.
+   Components link /styles.css; the kernel serves public/ statically,
+   and components may also passthrough it for subdomain routing. */
+
+:root {
+  --bg: #0f172a;
+  --fg: #e2e8f0;
+  --fg-muted: #94a3b8;
+  --surface: #1e293b;
+  --surface-2: #334155;
+  --border: #334155;
+  --accent: #4ade80;
+  --accent-2: #2563eb;
+  --accent-2-fg: #ffffff;
+  --danger: #f87171;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+}
+
+body.component-page main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+h1 { font-size: 1.6rem; margin: 0 0 1rem; }
+h2, h3 { margin: 1.25rem 0 0.5rem; }
+
+code, pre, .hash, .video-hash {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+/* ─── Layout primitives ─── */
+.header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.count, .meta, .video-meta, .note-meta, .token-info { color: var(--fg-muted); font-size: 0.9rem; }
+.empty { color: var(--fg-muted); font-style: italic; }
+
+.grid, .video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.card, .video-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+}
+.video-card a { color: inherit; display: block; }
+.video-card h3 { margin: 0 0 0.4rem; font-size: 1.05rem; }
+.video-desc { color: var(--fg-muted); font-size: 0.85rem; margin-top: 0.4rem; }
+
+/* ─── Forms & buttons ─── */
+input[type="text"], input[type="file"], textarea {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  margin-bottom: 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  font: inherit;
+}
+textarea { min-height: 4rem; resize: vertical; }
+
+button, .btn, .btn-increment, .btn-save, .btn-subscribe, .btn-unsubscribe {
+  display: inline-block;
+  padding: 0.55rem 1.1rem;
+  background: var(--accent);
+  color: #052e16;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+button:disabled { opacity: 0.5; cursor: default; }
+.btn-small { padding: 0.3rem 0.7rem; font-size: 0.85rem; }
+.btn-unsubscribe, .btn-save { background: var(--surface-2); color: var(--fg); }
+
+.upload-link {
+  background: var(--accent-2);
+  color: var(--accent-2-fg);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+/* ─── Feedback ─── */
+.status { padding: 0.75rem 1rem; border-radius: 8px; margin-top: 1rem; }
+.status.success { background: #14532d; color: #bbf7d0; }
+.status.error { background: #7f1d1d; color: #fecaca; }
+
+.progress { margin-top: 1rem; }
+.progress-bar {
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.file-info, .chunk-log, .token-box {
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+.chunk-log {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  max-height: 120px;
+  overflow-y: auto;
+  margin-top: 1rem;
+}
+.resume-badge {
+  display: inline-block;
+  background: var(--accent-2);
+  color: var(--accent-2-fg);
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+}
+
+/* ─── Misc ─── */
+details {
+  margin-top: 2rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border-radius: 12px;
+}
+summary { cursor: pointer; color: var(--fg-muted); }
+
+.actions { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; }
+.download-link { color: var(--accent); }
+.token-info { margin-top: 1rem; }
+
+.counter { font-size: 4rem; font-weight: 700; text-align: center; }
+.settings-card { max-width: 480px; margin: 0 auto; }
+.note-card .note-content { white-space: pre-wrap; }

@@ -23,7 +23,7 @@ This models real-world scenarios:
 All state lives in `devices.md` as Markdown-Linked Data:
 
 ```markdown
-[link] <tag:school.example.org,2026:link/>
+[link] <tag:example.org,2026:link/>
 
 ## ch {=link:device/62f983b0... .link:Device label}
 [2026-09-29T09:19:40.640Z] {link:createdAt}
@@ -134,7 +134,7 @@ function createToken(deviceId) {
 ## Adapting This Component
 
 ### Change the Domain
-Replace `tag:school.example.org,2026:link/` with your own tag URI:
+Replace `tag:example.org,2026:link/` with your own tag URI:
 ```javascript
 const PREFIX = 'tag:your-email@example.org,2026:your-app/';
 ```

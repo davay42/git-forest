@@ -16,7 +16,7 @@ const DEVICES_FILE = join(COMPONENT_DIR, 'devices.md');
 const NOTES_FILE = join(COMPONENT_DIR, 'notes.md');
 const SECRET = process.env.AUTH_SECRET || 'forest-link-demo-secret';
 
-const PREFIX = 'tag:school.example.org,2026:link/';
+const PREFIX = 'tag:example.org,2026:link/';
 const CONTEXT = { ...DEFAULT_CONTEXT, link: PREFIX, prov: 'http://www.w3.org/ns/prov#' };
 
 const { namedNode, literal, quad } = DataFactory;
