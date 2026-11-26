@@ -184,11 +184,11 @@ Every conversation needs a subject. [Kernel] {=gf:kernel} maintains three forms 
 ### Breathe Git Changes Role {=gf:kernel/breatheGit .prov:Role label}
 > Autonomically commits filesystem changes to Git history on a 5-second cycle. {comment}
 
-[Internal interval every BREATH_MS (default 5000ms)] {gf:hasTrigger}
-[./index.js#L198] {gf:hasPath}
+[Internal interval every BREATH_MS (default 5000ms), only when GIT_SECRET is set] {gf:hasTrigger}
+[./index.js#L81] {gf:hasPath}
 [Current git working directory state] {gf:expectsInput}
-[Git commit with semantic message describing changes] {gf:generatesOutput}
-[Dirty git status detected] {gf:requiresPrerequisite}
+[Git commit with semantic message describing changes, tagged GIT_FOREST_AUTONOMIC=1] {gf:generatesOutput}
+[GIT_SECRET configured (AUTONOMOUS_GIT) and dirty git status detected] {gf:requiresPrerequisite}
 
 ~~~~~~md {+#plan .prov:Plan ?prov:hadPlan prov:value}
 1. Run git status --porcelain
@@ -201,7 +201,8 @@ Every conversation needs a subject. [Kernel] {=gf:kernel} maintains three forms 
    - Knowledge changes (*.md) → "{components} knowledge"
    - User changes (users/) → "user {name}" or "{count} users"
    - Combine segments with " · "
-7. Run git commit -m with derived message
+7. Run git commit -m with derived message, env GIT_FOREST_AUTONOMIC=1 so
+   the post-commit hook knows this is memory, not a deploy
 8. Increment commitCount, log the breath
 ~~~~~~
 
@@ -228,7 +229,7 @@ Every conversation needs a subject. [Kernel] {=gf:kernel} maintains three forms 
 
 ## Act III: Growing the Forest
 
-[kernel] {=gf:kernel} grows its canopy not by deployment but by discovery. When new code is pushed, [the reload] {+gf:kernel/reload ?prov:hadRole} scans the forest root for directories containing an index.js, and for each one [swaps in a component] {+gf:kernel/swapComponent ?prov:hadRole} — spawning an isolated Node.js process, handing it a fresh Unix socket, and waiting. Readiness is not announced; it is sensed with exponential backoff until the process answers, then the kernel swaps it into the routing table in a single atomic gesture, so no visitor ever meets a half-grown tree. When a tree dies mid-flight, the same [swapComponent] {+gf:kernel/swapComponent ?prov:hadRole} notices and restarts it after a breath. On every push, [ensureGitHook] {+gf:kernel/ensureGitHook ?prov:hadRole} has already prepared the post-receive hook that distinguishes a kernel change from a component change, triggering targeted reloads only where needed. Growth and pruning happen without downtime — the canopy changes while birds are still mid-flight.
+[kernel] {=gf:kernel} grows its canopy not by deployment but by discovery. When new code is pushed, [the reload] {+gf:kernel/reload ?prov:hadRole} scans the forest root for directories containing an index.js, and for each one [swaps in a component] {+gf:kernel/swapComponent ?prov:hadRole} — spawning an isolated Node.js process, handing it a fresh Unix socket, and waiting. Readiness is not announced; it is sensed with exponential backoff until the process answers, then the kernel swaps it into the routing table in a single atomic gesture, so no visitor ever meets a half-grown tree. When a tree dies mid-flight, the same [swapComponent] {+gf:kernel/swapComponent ?prov:hadRole} notices and restarts it after a breath. On every push, [ensureGitHook] {+gf:kernel/ensureGitHook ?prov:hadRole} has already prepared two hooks: post-receive, which distinguishes a kernel change from a component change on push, and post-commit, which makes every local commit a targeted local deploy — while commits the kernel makes itself are marked GIT_FOREST_AUTONOMIC and never deploy. Growth and pruning happen without downtime — the canopy changes while birds are still mid-flight.
 
 ### Swap Component Role {=gf:kernel/swapComponent .prov:Role label}
 > Spawns a new component process, waits for readiness, then hot-swaps the router. {comment}
@@ -274,33 +275,39 @@ Every conversation needs a subject. [Kernel] {=gf:kernel} maintains three forms 
 ~~~~~~
 
 ### Ensure Git Hook Role {=gf:kernel/ensureGitHook .prov:Role label}
-> Writes the post-receive hook that triggers targeted reloads on push. {comment}
+> Writes the post-receive and post-commit hooks that turn Git activity into deploys. {comment}
 
 [Boot sequence, after git init/clone] {gf:hasTrigger}
-[./index.js#L784] {gf:hasPath}
-[Current RELOAD_TOKEN value] {gf:expectsInput}
-[.git/hooks/post-receive script with embedded token] {gf:generatesOutput}
+[./index.js#L787] {gf:hasPath}
+[Current RELOAD_TOKEN and PORT values] {gf:expectsInput}
+[.git/hooks/post-receive and .git/hooks/post-commit scripts with embedded token and port] {gf:generatesOutput}
 [Git repository exists with .git/hooks directory] {gf:requiresPrerequisite}
 
 ~~~~~~md {+#plan .prov:Plan ?prov:hadPlan prov:value}
 1. Ensure .git/hooks directory exists
-2. Generate shell script that:
-   - Reads oldrev/newrev/refname from stdin
+2. Bake coreURL = http://localhost:{PORT} and RELOAD_TOKEN into both scripts
+3. post-receive: read oldrev/newrev/refname from stdin
    - Skips branch deletions and non-main/master pushes
    - On first push: trigger full reload via curl
    - If index.js changed: kill PID 1 (triggers container restart)
    - Otherwise: extract changed directories, trigger targeted reload
-3. Write script with mode 0o755
+4. post-commit: local commits are local deploys
+   - Exit immediately when GIT_FOREST_AUTONOMIC=1 (kernel's own commits)
+   - Diff HEAD@{1}..HEAD, keep only paths inside directories, map to
+     top-level component dirs, ping targeted reload
+   - Root-file-only commits are silent; index.js-only commits print a
+     restart notice instead of reloading
+5. Write both scripts with mode 0o755
 ~~~~~~
 
 ### Heal Git State Role {=gf:kernel/healGitState .prov:Role label}
 > On boot, auto-commits tracked file modifications to restore push-to-deploy. {comment}
 
-[Boot sequence, before component spawn] {gf:hasTrigger}
-[./index.js#L823] {gf:hasPath}
+[Boot sequence, before component spawn, only when GIT_SECRET is set] {gf:hasTrigger}
+[./index.js#L847] {gf:hasPath}
 [Git working directory state] {gf:expectsInput}
-[Commit of tracked file changes if dirty] {gf:generatesOutput}
-[Git repository exists] {gf:requiresPrerequisite}
+[Commit of tracked file changes if dirty, tagged GIT_FOREST_AUTONOMIC=1] {gf:generatesOutput}
+[Git repository exists and AUTONOMOUS_GIT enabled] {gf:requiresPrerequisite}
 
 ~~~~~~md {+#plan .prov:Plan ?prov:hadPlan prov:value}
 1. Run git status --porcelain
@@ -315,7 +322,7 @@ Every conversation needs a subject. [Kernel] {=gf:kernel} maintains three forms 
 
 ## Act IV: Breathing and Resting
 
-[Kernel] {=gf:kernel} also lives on a rhythm no visitor ever triggers. Every five seconds it [breathes] {+gf:kernel/breatheGit ?prov:hadRole}: it wakes, looks at the filesystem, and if the working tree is dirty it inhales all changes with git add -A, reads the staged paths, and exhales a single semantic commit — deploy user · catalog knowledge · user alice payments — deriving the message from file structure alone, without any component ever telling it what happened. When five minutes pass without a breath, it [sleeps] {+gf:kernel/introspect ?prov:hadRole}, consolidating orphaned changes and running git gc; after an hour it descends into deep sleep via the same role, pruning the reflog and repacking objects like a body doing cellular maintenance. On boot it [heals itself] {+gf:kernel/healGitState ?prov:hadRole} — committing tracked-file modifications so push-to-deploy still works after an unclean shutdown, while deliberately leaving untracked soil alone. If a backup remote is configured, [new commits are pushed] {+gf:kernel/syncBackup ?prov:hadRole} every five minutes, so the forest's memory exists in more than one place. Monitoring systems can [check health] {+gf:kernel/health ?prov:hadRole} with a simple ping or [query status] {+gf:kernel/status ?prov:hadRole} for detailed metrics about breath state, component uptime, and commit counts. And when the process is asked to die, it [shuts down gracefully] {+gf:kernel/gracefulShutdown ?prov:hadRole}: SIGTERM to every component, drain the HTTP connections, unlink the sockets, exit. The forest does not crash. It exhales. to every component, drain the HTTP connections, unlink the sockets, exit. The forest does not crash. It exhales.
+[Kernel] {=gf:kernel} also lives on a rhythm no visitor ever triggers — but only when it has a name. With `GIT_SECRET` set, every five seconds it [breathes] {+gf:kernel/breatheGit ?prov:hadRole}: it wakes, looks at the filesystem, and if the working tree is dirty it inhales all changes with git add -A, reads the staged paths, and exhales a single semantic commit — deploy user · catalog knowledge · user alice payments — deriving the message from file structure alone, without any component ever telling it what happened. When five minutes pass without a breath, it [sleeps] {+gf:kernel/introspect ?prov:hadRole}, consolidating orphaned changes and running git gc; after an hour it descends into deep sleep via the same role, pruning the reflog and repacking objects like a body doing cellular maintenance. On boot it [heals itself] {+gf:kernel/healGitState ?prov:hadRole} — committing tracked-file modifications so push-to-deploy still works after an unclean shutdown, while deliberately leaving untracked soil alone. If a backup remote is configured, [new commits are pushed] {+gf:kernel/syncBackup ?prov:hadRole} every five minutes, so the forest's memory exists in more than one place. Monitoring systems can [check health] {+gf:kernel/health ?prov:hadRole} with a simple ping or [query status] {+gf:kernel/status ?prov:hadRole} for detailed metrics about breath state, component uptime, and commit counts. And when the process is asked to die, it [shuts down gracefully] {+gf:kernel/gracefulShutdown ?prov:hadRole}: SIGTERM to every component, drain the HTTP connections, unlink the sockets, exit. The forest does not crash. It exhales. Without `GIT_SECRET` the forest is dormant — an anonymous local workspace where Git stays manual, `/git` stays disabled, and the boot log says so. Being a named, pushable origin is what makes a forest worth remembering; breathing is a consequence of identity, not a dev-mode toggle.
 
 ### Check Health Role {=gf:kernel/health .prov:Role label}
 > Returns a simple health check response for monitoring systems. {comment}
@@ -393,7 +400,7 @@ The kernel reads configuration from environment variables:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PORT` | `3000` | HTTP server port |
-| `GIT_SECRET` | *(none)* | Password for Git push-to-deploy (Basic auth) |
+| `GIT_SECRET` | *(none)* | Git identity: enables `/git` push-to-deploy AND autonomic breathing — unset = dormant anonymous workspace |
 | `TRUST_PROXY` | `0` | Trust X-Forwarded-For header |
 | `GIT_BACKUP_URL` | *(none)* | Remote Git URL for periodic backup pushes |
 | `RELOAD_TOKEN` | *(random)* | Token for internal reload API calls |

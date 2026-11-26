@@ -327,6 +327,10 @@ const ledger = await readFile(`users/${userId}/payments.md`, 'utf8');
 
 **Producer Pattern (user-managing components):** Rebuild from semantic files on boot, sync the state file on every mutation. The component owns the knowledge; `users.json` is the volatile cache.
 
+### Starter Templates
+
+The repo ships a `templates/` directory of ready-to-plant components — `blog`, `notes`, `video`, `tunnel`, `user`, `notify`, `test`, `test-identity`. Each is a complete working agent with its own README, seed files, and `.gitignore` marking its Soil. Copy one to the forest root, commit (or reload), and it mounts — every template's only external dependency is `public/mdld-parse.js`, the single-file MD-LD engine in the ground cover.
+
 ---
 
 ## VI. The DNA Double Helix: JS + MD-LD
@@ -488,7 +492,18 @@ mkdir my-forest && cd my-forest
 npx @davay/git-forest
 ```
 
-This initializes a Git repository, writes a secure `post-receive` hook for zero-downtime hot reloads, and starts the HTTP server on port 3000.
+This initializes a Git repository, writes the deploy hooks, and starts the HTTP server on port 3000.
+
+> **Dormant by default:** without `GIT_SECRET` the forest is an anonymous local workspace — no autonomic commits, no `/git` endpoint. Set `GIT_SECRET` and the forest gets a name: it breathes (auto-commits, sleep consolidation, boot healing) and accepts push-to-deploy.
+
+### Commits Are Deploys
+
+Two hooks turn Git activity into zero-downtime reloads:
+
+- **`post-commit`** — every local `git commit` that touches a component directory triggers a targeted reload. Edit code, commit, done — no restart, no push required. Commits that only touch root files are silent, and commits the kernel makes itself (breathing, sleep, heal) carry a `GIT_FOREST_AUTONOMIC` marker that makes the hook exit immediately — memory never triggers deploys.
+- **`post-receive`** — `git push` to the forest's own `/git` endpoint deploys remotely, with the same targeted-reload logic.
+
+Knowledge files (`.md` catalogs, posts, profiles) need no deploy at all — components read them from disk per request.
 
 ### Push-to-Deploy
 
@@ -507,13 +522,16 @@ The `post-receive` hook inspects the diff:
 
 Run as a single stateful container with a persistent volume mounted to `/app`:
 
+The repo ships a `Dockerfile` — or use this equivalent:
+
 ```dockerfile
 FROM node:22-alpine
 RUN apk add --no-cache git git-daemon curl
 
 WORKDIR /opt/git-forest-seed
-COPY index.js .
-COPY .gitignore .
+COPY index.js .gitignore ./
+COPY public ./public
+COPY templates /opt/git-forest-templates
 
 WORKDIR /app
 EXPOSE 3000
@@ -521,10 +539,16 @@ EXPOSE 3000
 ENTRYPOINT ["sh", "-c", "\
     if [ ! -f 'index.js' ]; then \
         echo '[docker] 🌱 Empty volume detected. Seeding core files...'; \
-        cp /opt/git-forest-seed/* . 2>/dev/null || true; \
+        cp -r /opt/git-forest-seed/. . 2>/dev/null || true; \
     fi; \
     exec node index.js \
 "]
+```
+
+The seed includes `public/` (the shared `mdld-parse.js` engine and `styles.css` every template expects) but deliberately not `templates/` — they live at `/opt/git-forest-templates` inside the image, since every top-level directory with an `index.js` auto-mounts. Copy one in when you want it:
+
+```bash
+docker cp container:/opt/git-forest-templates/video /app/video   # then commit or reload
 ```
 
 ### Environment Variables
@@ -532,7 +556,7 @@ ENTRYPOINT ["sh", "-c", "\
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PORT` | `3000` | HTTP server port |
-| `GIT_SECRET` | (none) | Password for Git push-to-deploy |
+| `GIT_SECRET` | (none) | Git identity — enables `/git` push-to-deploy AND autonomic breathing; unset = dormant |
 | `AUTH_SECRET` | (random) | HMAC key for device identity signing |
 | `GIT_BACKUP_URL` | (none) | Remote Git URL for backup pushes |
 | `FOREST_BREATH_MS` | `5000` | Breathing interval (milliseconds) |
