@@ -340,7 +340,8 @@ async function swapComponent(name) {
   await unlink(socketPath).catch(() => { });
   console.log(`[sync] 🌱 Starting /${name}...`);
 
-  const newProc = spawn("node", [scriptPath], {
+  const runtime = process.env.FOREST_NODE_BIN || process.execPath || "node";
+  const newProc = spawn(runtime, [scriptPath], {
     env: {
       ...process.env,
       SOCKET_PATH: socketPath,
@@ -531,6 +532,70 @@ function handleGit(req, res, ip) {
 }
 
 // ─── HTTP PROXY ────────────────────────────────────────────────────────────
+// Some engines (e.g. Ant Silver) implement node:http but cannot dial unix
+// sockets. Probe once at boot: if a socketPath request fails, fall back to a
+// raw net-socket proxy. Capability-gated, not runtime-gated.
+let RAW_PROXY = false;
+
+async function detectProxyMode() {
+  const probePath = `/tmp/forest-proxy-probe-${Date.now()}.sock`;
+  const srv = net.createServer(sock => {
+    sock.on("data", () => {
+      sock.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+  });
+  await new Promise((res, rej) => { srv.once("error", rej); srv.listen(probePath, res); });
+  const ok = await new Promise(resolve => {
+    const r = request({ socketPath: probePath, path: "/", method: "GET", timeout: 2000 }, res => {
+      res.resume();
+      res.on("end", () => resolve(true));
+    });
+    r.on("timeout", () => { r.destroy(); resolve(false); });
+    r.on("error", () => resolve(false));
+    r.end();
+  });
+  await new Promise(res => srv.close(res));
+  RAW_PROXY = !ok;
+  if (RAW_PROXY) console.log("[proxy] node:http lacks unix-socket client — using raw net proxy");
+}
+
+function rawProxyToComponent(req, res, component, strippedUrl, headers) {
+  const sock = net.connect({ path: component.socketPath });
+  // Connection: close upstream — the proxy ends res when the socket closes,
+  // so keep-alive would leave fetch() hanging forever.
+  const fwd = Object.entries(headers).filter(([k]) => k.toLowerCase() !== 'connection');
+  const head = [`${req.method} ${strippedUrl} HTTP/1.1`, `Host: forest`, ...fwd.map(([k, v]) => `${k}: ${v}`), "Connection: close", "", ""].join("\r\n");
+  let buf = Buffer.alloc(0), headersSent = false;
+
+  sock.on("connect", () => {
+    sock.write(head);
+    // Forward the request body without ending the socket — a FIN here can
+    // race the response on minimal engines.
+    req.on("data", c => sock.write(c));
+  });
+  sock.on("data", chunk => {
+    if (headersSent) return res.write(chunk);
+    buf = Buffer.concat([buf, chunk]);
+    const end = buf.indexOf("\r\n\r\n");
+    if (end === -1) return;
+    headersSent = true;
+    const lines = buf.subarray(0, end).toString().split("\r\n");
+    const status = parseInt(lines[0].split(" ")[1], 10) || 502;
+    const outHeaders = {};
+    for (const line of lines.slice(1)) {
+      const i = line.indexOf(":");
+      if (i > 0) outHeaders[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+    }
+    res.writeHead(status, outHeaders);
+    res.write(buf.subarray(end + 4));
+  });
+  sock.on("error", () => {
+    if (!headersSent) res.writeHead(502);
+    res.end("Component unavailable");
+  });
+  sock.on("close", () => res.end());
+}
+
 function proxyToComponent(req, res, segment, isSubdomain = false) {
   const component = components.get(segment);
   if (!component) {
@@ -549,6 +614,8 @@ function proxyToComponent(req, res, segment, isSubdomain = false) {
   if (req.forestDeviceId) headers['x-forest-device-id'] = req.forestDeviceId;
   const userId = deviceUserMap.get(req.forestDeviceId);
   if (userId) headers['x-forest-user-id'] = userId;
+
+  if (RAW_PROXY) return rawProxyToComponent(req, res, component, strippedUrl, headers);
 
   const proxyReq = request({
     agent: proxyAgent,
@@ -1007,6 +1074,8 @@ async function boot() {
     setTimeout(syncToBackup, BACKUP_INITIAL_DELAY_MS);
     setInterval(syncToBackup, BACKUP_INTERVAL_MS);
   }
+
+  await detectProxyMode();
 
   server.listen(PORT, () => {
     console.log(`[ready] http://localhost:${PORT} | components: ${[...components.keys()].join(", ") || "none"}`);
