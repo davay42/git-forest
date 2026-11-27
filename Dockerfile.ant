@@ -1,0 +1,28 @@
+# Ant variant — same forest, ~9MB runtime instead of Node.
+# Build: docker build -f Dockerfile.ant -t git-forest-ant .
+#        docker build -f Dockerfile.ant --build-arg ANT_TARGET=linux-x64-musl -t git-forest-ant .
+FROM alpine:3.20
+
+ARG ANT_TARGET=linux-aarch64-musl
+
+RUN apk add --no-cache git git-daemon curl ca-certificates
+
+# Ant binary — manifest serves per-target artifacts; musl builds are static
+RUN curl -fsSL "https://manifest.antjs.org/v1/download/ant/${ANT_TARGET}" -o /usr/local/bin/ant \
+    && chmod +x /usr/local/bin/ant
+
+WORKDIR /opt/git-forest-seed
+COPY index.js .gitignore ./
+COPY public ./public
+COPY templates /opt/git-forest-templates
+
+WORKDIR /app
+EXPOSE 3000
+
+ENTRYPOINT ["sh", "-c", "\
+    if [ ! -f 'index.js' ]; then \
+        echo '[docker] 🌱 Empty volume detected. Seeding core files...'; \
+        cp -r /opt/git-forest-seed/. . 2>/dev/null || true; \
+    fi; \
+    exec ant index.js \
+"]

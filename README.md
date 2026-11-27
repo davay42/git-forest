@@ -551,6 +551,19 @@ The seed includes `public/` (the shared `mdld-parse.js` engine and `styles.css` 
 docker cp container:/opt/git-forest-templates/video /app/video   # then commit or reload
 ```
 
+### Alternative Runtimes
+
+The kernel is WinterTC-compatible — it runs on any JS engine that implements the server-side common API, not just Node. Verified with [Ant](https://antjs.org) (a ~9 MB runtime with its own engine):
+
+- At boot the kernel **probes its own capabilities** — it attempts a real unix-socket HTTP request and, only if that fails, falls back to a raw `net`-socket proxy for component traffic. No runtime sniffing; an engine that gains socket support just works.
+- Components inherit the parent's runtime via `process.execPath` — override with `FOREST_NODE_BIN` if needed.
+- `Dockerfile.ant` ships a ~36 MB Alpine image (static musl Ant binary + git) vs ~200 MB for the Node image — same seed, same volume semantics, same behavior.
+
+```bash
+docker build -f Dockerfile.ant -t git-forest-ant .
+docker build -f Dockerfile.ant --build-arg ANT_TARGET=linux-x64-musl -t git-forest-ant .
+```
+
 ### Environment Variables
 
 | Variable | Default | Purpose |
@@ -562,6 +575,8 @@ docker cp container:/opt/git-forest-templates/video /app/video   # then commit o
 | `FOREST_BREATH_MS` | `5000` | Breathing interval (milliseconds) |
 | `FOREST_SLEEP_AFTER_MS` | `300000` | Enter sleep after this quiet period |
 | `FOREST_DEEP_SLEEP_AFTER_MS` | `3600000` | Enter deep sleep after this quiet period |
+| `FOREST_NODE_BIN` | `process.execPath` | Runtime binary used to spawn components |
+| `RELOAD_TOKEN` | (random) | Token for `POST /_forest/reload` |
 
 ---
 
